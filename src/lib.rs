@@ -131,38 +131,21 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
 }
 
 fn load_and_analyze_binary(path: &Path, name: String) -> Result<BinaryFeatures> {
-    // For BNDB files, we can't directly parse them in Rust
-    // This is a placeholder - in practice, this would need to be handled by the Python side
-    // For now, let's use a simplified approach based on file metadata
-    let metadata = std::fs::metadata(path).context("Failed to read file metadata")?;
-    let file_size = metadata.len();
-    
-    // Create dummy features based on file characteristics
-    let mut instruction_hashes = HashSet::new();
-    let mut function_hashes = HashSet::new();
-    let mut basic_block_hashes = HashSet::new();
-    
-    // Generate some deterministic hashes based on file properties
-    let name_hash = BinaryFeatures::hash_bytes(name.as_bytes());
-    let size_hash = BinaryFeatures::hash_bytes(&file_size.to_le_bytes());
-    let path_hash = BinaryFeatures::hash_bytes(path.to_string_lossy().as_bytes());
-    
-    instruction_hashes.insert(name_hash);
-    instruction_hashes.insert(size_hash);
-    
-    function_hashes.insert(path_hash);
-    function_hashes.insert(name_hash ^ size_hash);
-    
-    basic_block_hashes.insert(size_hash ^ path_hash);
-    basic_block_hashes.insert(name_hash ^ path_hash);
-    
-    Ok(BinaryFeatures {
+    // NOTE: This computes *byte-level* similarity over the raw file contents,
+    // using the identical chunk-and-hash featurization as the reference side
+    // (see `BinaryFeatures::extract_from_bytes`). It does NOT disassemble the
+    // .bndb — for true instruction/basic-block/function similarity the file
+    // must be routed through Binary Ninja on the Python side. Keeping both
+    // sides on the same featurization is what makes the Jaccard score
+    // meaningful; the previous metadata-based "dummy features" compared
+    // name/size/path against the reference's real byte chunks and produced
+    // a similarity that was effectively noise.
+    let bytes = std::fs::read(path).context("Failed to read binary file")?;
+    BinaryFeatures::extract_from_bytes(
+        &bytes,
         name,
-        path: path.to_string_lossy().to_string(),
-        instruction_hashes,
-        function_hashes,
-        basic_block_hashes,
-    })
+        path.to_string_lossy().to_string(),
+    )
 }
 
 fn is_binary_file(path: &Path) -> bool {

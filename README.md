@@ -4,7 +4,9 @@ A Binary Ninja plugin for performing Jaccard similarity analysis on binary files
 
 ## Overview
 
-This plugin extracts features from binary files (instructions, functions, basic blocks) and calculates Jaccard similarity coefficients to identify similar binaries. It combines Python for Binary Ninja integration with Rust for efficient computation and data export.
+This plugin computes **byte-level** Jaccard similarity between binary files and exports the results to Parquet. It combines Python for Binary Ninja integration with Rust for efficient computation and data export.
+
+> **Note on what "similarity" means here.** The analyzer does **not** disassemble the input or compare instructions/basic blocks/functions semantically. It hashes raw-byte windows of three sizes (see *Feature Extraction* below) and computes Jaccard over those hash sets. This makes it a fast structural/byte-overlap signal, not a code-aware diff. For true instruction/basic-block/function similarity the `.bndb` would need to be routed through Binary Ninja on the Python side (future work). Both sides of every comparison use the identical byte-window featurization, so scores are content-driven and comparable.
 
 ## Features
 
@@ -12,7 +14,7 @@ This plugin extracts features from binary files (instructions, functions, basic 
 - **Multiple Analysis Modes**:
   - Reference-based: Compare one binary against a folder of binaries
   - Pairwise: Compare all binaries in a folder against each other
-- **Feature Extraction**: Analyzes instructions, functions, and basic blocks
+- **Feature Extraction**: Byte-window hashing at three window sizes (not disassembly-based)
 - **High Performance**: Rust backend with parallel processing using Rayon
 - **Data Export**: Results exported to Parquet format for data analysis workflows
 - **Binary Ninja Integration**: Native UI integration with file dialogs and progress feedback
@@ -63,24 +65,24 @@ The plugin includes a standalone CLI tool:
 
 ### Feature Extraction
 
-The plugin extracts three types of features from each binary:
+The analyzer reads each file's raw bytes and hashes overlapping/aligned byte windows of three sizes into three hash sets. The set names are kept for output-schema compatibility, but they are **byte windows, not disassembled code**:
 
-1. **Instructions**: Hashed disassembly of individual instructions
-2. **Functions**: Hashed function characteristics (address, size)
-3. **Basic Blocks**: Hashed basic block boundaries
+1. **"Instructions"**: SHA-256 hashes of 4-byte windows
+2. **"Functions"**: SHA-256 hashes of 16-byte windows
+3. **"Basic Blocks"**: SHA-256 hashes of 8-byte windows
 
 ### Similarity Calculation
 
-Jaccard similarity is calculated for each feature type:
+Jaccard similarity is calculated for each byte-window set:
 
 ```
 J(A,B) = |A ∩ B| / |A ∪ B|
 ```
 
-Overall similarity uses weighted combination:
-- Instructions: 40%
-- Functions: 40% 
-- Basic Blocks: 20%
+Overall similarity uses a weighted combination of the three sets:
+- "Instructions" (4-byte windows): 40%
+- "Functions" (16-byte windows): 40%
+- "Basic Blocks" (8-byte windows): 20%
 
 ### Output Format
 
