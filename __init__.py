@@ -62,7 +62,16 @@ def analyze_folder_jaccard(bv):
         log_error(f"Plugin error: {str(e)}")
 
 def analyze_folder_pairwise_jaccard(bv):
-    """Perform pairwise Jaccard similarity analysis of all BNDB files in a folder"""
+    """Perform pairwise Jaccard similarity analysis of all BNDB files in a folder.
+
+    Routes through the Rust `jaccard_analyzer` engine (byte-level Jaccard over
+    real file content) so the menu command and the CLI share one implementation,
+    rather than the prior separate pure-Python feature extraction.
+    """
+    if not rust_available:
+        show_message_box("Error", "Rust binary not available. Please build the plugin first with 'cargo build --release'.", MessageBoxButtonSet.OKButtonSet)
+        return
+
     # Get folder to analyze
     folder_path = get_directory_name_input("Select folder with BNDB files", "Folder:")
     if not folder_path:
@@ -74,95 +83,20 @@ def analyze_folder_pairwise_jaccard(bv):
         return
 
     try:
-        from pathlib import Path
-        
-        folder = Path(folder_path)
-        
-        # Find BNDB files only
-        bndb_files = list(folder.glob('*.bndb'))
-        
-        if len(bndb_files) < 2:
-            show_message_box("Error", f"Need at least 2 BNDB files for pairwise analysis. Found {len(bndb_files)}", MessageBoxButtonSet.OKButtonSet)
-            return
-        
-        log_info(f"Found {len(bndb_files)} BNDB files for pairwise analysis")
-        
-        # Load all binaries and extract features
-        binary_features = []
-        
-        for bndb_path in bndb_files:
-            try:
-                # Load BNDB file in Binary Ninja
-                target_bv = load(str(bndb_path))
-                if target_bv is None:
-                    log_warn(f"Could not load BNDB file: {bndb_path}")
-                    continue
-                
-                # Wait for analysis to complete
-                target_bv.update_analysis_and_wait()
-                    
-                features = extract_binja_features(target_bv)
-                binary_features.append({
-                    'name': bndb_path.name,
-                    'path': str(bndb_path),
-                    'features': features
-                })
-                
-                target_bv.file.close()
-                log_info(f"Loaded features for {bndb_path.name}: {len(features['instructions'])} instr, {len(features['functions'])} func, {len(features['basic_blocks'])} bb")
-                
-            except Exception as e:
-                log_warn(f"Failed to analyze {bndb_path}: {e}")
-                continue
-        
-        if len(binary_features) < 2:
-            show_message_box("Error", f"Could only load {len(binary_features)} valid BNDB files", MessageBoxButtonSet.OKButtonSet)
-            return
-        
-        # Calculate pairwise similarities
-        results = []
-        total_comparisons = 0
-        identical_comparisons = 0
-        
-        log_info(f"Starting pairwise comparison of {len(binary_features)} binaries")
-        
-        for i in range(len(binary_features)):
-            for j in range(len(binary_features)):
-                binary1 = binary_features[i]
-                binary2 = binary_features[j]
-                
-                is_identical = (i == j) or (binary1['path'] == binary2['path'])
-                total_comparisons += 1
-                
-                similarity = calculate_jaccard_similarity(binary1['features'], binary2['features'])
-                
-                results.append({
-                    'binary1': binary1['name'],
-                    'binary2': binary2['name'],
-                    'jaccard_index': similarity['overall_similarity'],
-                    'instruction_similarity': similarity['instruction_similarity'],
-                    'function_similarity': similarity['function_similarity'],
-                    'basic_block_similarity': similarity['basic_block_similarity']
-                })
-                
-                if is_identical:
-                    identical_comparisons += 1
-                    if similarity['overall_similarity'] < 1.0:
-                        log_warn(f"ISSUE: Identical binary comparison {binary1['name']} vs {binary2['name']} got similarity {similarity['overall_similarity']:.4f} instead of 1.0")
-                        log_warn(f"  Instruction similarity: {similarity['instruction_similarity']:.4f}")
-                        log_warn(f"  Function similarity: {similarity['function_similarity']:.4f}")
-                        log_warn(f"  Basic block similarity: {similarity['basic_block_similarity']:.4f}")
-                    else:
-                        log_info(f"✓ Identical binary comparison {binary1['name']} vs {binary2['name']}: {similarity['overall_similarity']:.4f}")
-                else:
-                    log_info(f"Compared {binary1['name']} vs {binary2['name']}: {similarity['overall_similarity']:.4f}")
-        
-        log_info(f"Completed {total_comparisons} total comparisons, {identical_comparisons} were identical binaries")
-        
-        # Export results to Parquet
-        export_pairwise_results_to_parquet(results, output_path)
-        show_message_box("Success", f"Pairwise analysis completed. Analyzed {len(results)} pairs. Results saved to {output_path}", MessageBoxButtonSet.OKButtonSet)
-        
+        # Call the Rust binary in pairwise mode.
+        cmd = [rust_binary_path, "-p", "-f", folder_path, "-o", output_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        show_message_box("Success", f"Pairwise analysis completed. Results saved to {output_path}", MessageBoxButtonSet.OKButtonSet)
+        if result.stdout:
+            log_info(f"Rust analyzer output: {result.stdout}")
+
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Pairwise analysis failed with exit code {e.returncode}"
+        if e.stderr:
+            error_msg += f"\nError: {e.stderr}"
+        show_message_box("Error", error_msg, MessageBoxButtonSet.OKButtonSet)
+        log_error(error_msg)
     except Exception as e:
         show_message_box("Error", f"Pairwise analysis failed: {str(e)}", MessageBoxButtonSet.OKButtonSet)
         log_error(f"Plugin error: {str(e)}")
@@ -347,30 +281,6 @@ def export_results_to_parquet(results, output_path):
                     'basic_block_similarity': similarity['basic_block_similarity'],
                     'overall_similarity': similarity['overall_similarity']
                 })
-        
-        show_message_box("Info", f"Pandas not available. Results saved as CSV: {csv_path}", 
-                        MessageBoxButtonSet.OKButtonSet)
-
-def export_pairwise_results_to_parquet(results, output_path):
-    """Export pairwise results to Parquet format using pandas"""
-    try:
-        import pandas as pd
-        
-        # Convert results to DataFrame
-        df = pd.DataFrame(results)
-        df.to_parquet(output_path, index=False)
-        
-    except ImportError:
-        # Fallback to CSV if pandas not available
-        import csv
-        csv_path = output_path.replace('.parquet', '.csv')
-        
-        with open(csv_path, 'w', newline='') as csvfile:
-            if results:
-                fieldnames = ['binary1', 'binary2', 'jaccard_index', 'instruction_similarity', 'function_similarity', 'basic_block_similarity']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(results)
         
         show_message_box("Info", f"Pandas not available. Results saved as CSV: {csv_path}", 
                         MessageBoxButtonSet.OKButtonSet)
