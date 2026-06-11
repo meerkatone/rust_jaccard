@@ -285,7 +285,11 @@ def export_results_to_parquet(results, output_path):
         show_message_box("Info", f"Pandas not available. Results saved as CSV: {csv_path}", 
                         MessageBoxButtonSet.OKButtonSet)
 
-# Register the plugin command
-PluginCommand.register("Jaccard Similarity", 
-                      "Perform pairwise Jaccard similarity analysis of all BNDB files in a folder", 
+# Register the plugin commands
+PluginCommand.register("Jaccard Similarity",
+                      "Perform pairwise Jaccard similarity analysis of all BNDB files in a folder",
                       analyze_folder_pairwise_jaccard)
+
+PluginCommand.register("Jaccard Similarity (Reference)",
+                      "Compare the current binary against a folder of binaries (Rust engine)",
+                      analyze_folder_jaccard)
