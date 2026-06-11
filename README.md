@@ -42,12 +42,11 @@ This plugin computes **byte-level** Jaccard similarity between binary files and 
 
 ### From Binary Ninja UI
 
-1. Open a binary file in Binary Ninja
-2. Go to **Tools** → **Jaccard Similarity**
-3. Choose analysis mode:
-   - **Pairwise Analysis**: Select folder containing BNDB files to compare all pairs
-   - **Reference Analysis**: Compare current binary against folder of binaries
-4. Select output location for results (Parquet format)
+The plugin registers two commands (Plugins menu), both of which run through the
+bundled Rust `jaccard_analyzer` engine and prompt for a Parquet output location:
+
+- **Jaccard Similarity** — pairwise: select a folder of `.bndb` files; every pair is compared.
+- **Jaccard Similarity (Reference)** — compare the current (saved) binary against a folder of binaries.
 
 ### Command Line Interface
 
