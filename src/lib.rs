@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use log::info;
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::io::Read;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -16,42 +17,40 @@ pub use parquet_export::ParquetExporter;
 pub struct BinaryFeatures {
     pub name: String,
     pub path: String,
-    pub instruction_hashes: HashSet<u64>,
-    pub function_hashes: HashSet<u64>,
-    pub basic_block_hashes: HashSet<u64>,
+    pub chunk_4_hashes: HashSet<u64>,
+    pub chunk_16_hashes: HashSet<u64>,
+    pub chunk_8_hashes: HashSet<u64>,
 }
 
 impl BinaryFeatures {
     pub fn extract_from_bytes(bytes: &[u8], name: String, path: String) -> Result<Self> {
-        let mut instruction_hashes = HashSet::new();
-        let mut function_hashes = HashSet::new();
-        let mut basic_block_hashes = HashSet::new();
+        let mut chunk_4_hashes = HashSet::new();
+        let mut chunk_16_hashes = HashSet::new();
+        let mut chunk_8_hashes = HashSet::new();
 
-        // Simple feature extraction from raw bytes
-        // This is a simplified approach - in practice you'd want to use a disassembler
+        // These are deliberately raw-byte chunk features, not disassembled code.
         for chunk in bytes.chunks(4) {
             let hash = Self::hash_bytes(chunk);
-            instruction_hashes.insert(hash);
+            chunk_4_hashes.insert(hash);
         }
 
-        // Extract function-like patterns (simplified)
+        // Coarser chunk sizes capture longer identical byte runs.
         for chunk in bytes.chunks(16) {
             let hash = Self::hash_bytes(chunk);
-            function_hashes.insert(hash);
+            chunk_16_hashes.insert(hash);
         }
 
-        // Extract basic block-like patterns (simplified)
         for chunk in bytes.chunks(8) {
             let hash = Self::hash_bytes(chunk);
-            basic_block_hashes.insert(hash);
+            chunk_8_hashes.insert(hash);
         }
 
         Ok(BinaryFeatures {
             name,
             path,
-            instruction_hashes,
-            function_hashes,
-            basic_block_hashes,
+            chunk_4_hashes,
+            chunk_16_hashes,
+            chunk_8_hashes,
         })
     }
 
@@ -135,24 +134,47 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
 }
 
 fn load_and_analyze_binary(path: &Path, name: String) -> Result<BinaryFeatures> {
-    // NOTE: This computes *byte-level* similarity over the raw file contents,
-    // using the identical chunk-and-hash featurization as the reference side
-    // (see `BinaryFeatures::extract_from_bytes`). It does NOT disassemble the
-    // .bndb — for true instruction/basic-block/function similarity the file
-    // must be routed through Binary Ninja on the Python side. Keeping both
-    // sides on the same featurization is what makes the Jaccard score
-    // meaningful; the previous metadata-based "dummy features" compared
-    // name/size/path against the reference's real byte chunks and produced
-    // a similarity that was effectively noise.
+    // This computes byte-level similarity over original binary files using the
+    // same chunk-and-hash featurization on both sides. Database files are
+    // excluded during discovery because their SQLite contents describe Binary
+    // Ninja state rather than the program bytes being compared.
     let bytes = std::fs::read(path).context("Failed to read binary file")?;
     BinaryFeatures::extract_from_bytes(&bytes, name, path.to_string_lossy().to_string())
 }
 
 fn is_binary_file(path: &Path) -> bool {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some(ext) => ext.to_lowercase() == "bndb",
-        None => false,
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if extension == "bndb" {
+        return false;
     }
+    if matches!(
+        extension.as_str(),
+        "exe" | "dll" | "sys" | "bin" | "so" | "dylib" | "o" | "elf"
+    ) {
+        return true;
+    }
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut header = [0u8; 4];
+    if file.read_exact(&mut header).is_err() {
+        return false;
+    }
+    header.starts_with(b"MZ")
+        || header.starts_with(b"\x7fELF")
+        || matches!(
+            header,
+            [0xfe, 0xed, 0xfa, 0xce]
+                | [0xce, 0xfa, 0xed, 0xfe]
+                | [0xfe, 0xed, 0xfa, 0xcf]
+                | [0xcf, 0xfa, 0xed, 0xfe]
+                | [0xca, 0xfe, 0xba, 0xbe]
+        )
 }
 
 fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result<()> {

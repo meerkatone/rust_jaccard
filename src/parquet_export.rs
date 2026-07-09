@@ -49,9 +49,9 @@ impl ParquetExporter {
             Field::new("binary2", DataType::Utf8, false),
             Field::new("binary_pair", DataType::Utf8, false),
             Field::new("jaccard_index", DataType::Float64, false),
-            Field::new("instruction_similarity", DataType::Float64, false),
-            Field::new("function_similarity", DataType::Float64, false),
-            Field::new("basic_block_similarity", DataType::Float64, false),
+            Field::new("chunk_4_similarity", DataType::Float64, false),
+            Field::new("chunk_16_similarity", DataType::Float64, false),
+            Field::new("chunk_8_similarity", DataType::Float64, false),
         ];
 
         Arc::new(Schema::new(fields))
@@ -84,9 +84,9 @@ impl ParquetExporter {
 
             binary_pairs.push(pair_name.as_str());
             jaccard_indices.push(similarity.overall_similarity);
-            instruction_similarities.push(similarity.instruction_similarity);
-            function_similarities.push(similarity.function_similarity);
-            basic_block_similarities.push(similarity.basic_block_similarity);
+            instruction_similarities.push(similarity.chunk_4_similarity);
+            function_similarities.push(similarity.chunk_16_similarity);
+            basic_block_similarities.push(similarity.chunk_8_similarity);
         }
 
         let columns: Vec<Arc<dyn Array>> = vec![
@@ -129,9 +129,9 @@ impl ParquetExporter {
         let fields = vec![
             Field::new("binary_name", DataType::Utf8, false),
             Field::new("binary_path", DataType::Utf8, false),
-            Field::new("instruction_similarity", DataType::Float64, false),
-            Field::new("function_similarity", DataType::Float64, false),
-            Field::new("basic_block_similarity", DataType::Float64, false),
+            Field::new("chunk_4_similarity", DataType::Float64, false),
+            Field::new("chunk_16_similarity", DataType::Float64, false),
+            Field::new("chunk_8_similarity", DataType::Float64, false),
             Field::new("overall_similarity", DataType::Float64, false),
             Field::new("analysis_timestamp", DataType::Utf8, false),
             Field::new("analyzer_version", DataType::Utf8, false),
@@ -161,9 +161,9 @@ impl ParquetExporter {
         for (name, path, similarity) in results {
             binary_names.push(name.as_str());
             binary_paths.push(path.as_str());
-            instruction_similarities.push(similarity.instruction_similarity);
-            function_similarities.push(similarity.function_similarity);
-            basic_block_similarities.push(similarity.basic_block_similarity);
+            instruction_similarities.push(similarity.chunk_4_similarity);
+            function_similarities.push(similarity.chunk_16_similarity);
+            basic_block_similarities.push(similarity.chunk_8_similarity);
             overall_similarities.push(similarity.overall_similarity);
             timestamps.push(timestamp.as_str());
             versions.push(version);
@@ -211,9 +211,9 @@ mod tests {
     fn test_export_single_result() {
         let exporter = ParquetExporter::new();
         let similarity = JaccardSimilarity {
-            instruction_similarity: 0.5,
-            function_similarity: 0.6,
-            basic_block_similarity: 0.7,
+            chunk_4_similarity: 0.5,
+            chunk_16_similarity: 0.6,
+            chunk_8_similarity: 0.7,
             overall_similarity: 0.6,
         };
         let results = vec![(

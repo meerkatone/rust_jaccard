@@ -3,36 +3,32 @@ use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct JaccardSimilarity {
-    pub instruction_similarity: f64,
-    pub function_similarity: f64,
-    pub basic_block_similarity: f64,
+    pub chunk_4_similarity: f64,
+    pub chunk_16_similarity: f64,
+    pub chunk_8_similarity: f64,
     pub overall_similarity: f64,
 }
 
 pub struct JaccardAnalyzer {
-    pub instruction_weight: f64,
-    pub function_weight: f64,
-    pub basic_block_weight: f64,
+    pub chunk_4_weight: f64,
+    pub chunk_16_weight: f64,
+    pub chunk_8_weight: f64,
 }
 
 impl JaccardAnalyzer {
     pub fn new() -> Self {
         Self {
-            instruction_weight: 0.4,
-            function_weight: 0.4,
-            basic_block_weight: 0.2,
+            chunk_4_weight: 0.4,
+            chunk_16_weight: 0.4,
+            chunk_8_weight: 0.2,
         }
     }
 
-    pub fn with_weights(
-        instruction_weight: f64,
-        function_weight: f64,
-        basic_block_weight: f64,
-    ) -> Self {
+    pub fn with_weights(chunk_4_weight: f64, chunk_16_weight: f64, chunk_8_weight: f64) -> Self {
         Self {
-            instruction_weight,
-            function_weight,
-            basic_block_weight,
+            chunk_4_weight,
+            chunk_16_weight,
+            chunk_8_weight,
         }
     }
 
@@ -41,23 +37,23 @@ impl JaccardAnalyzer {
         binary1: &BinaryFeatures,
         binary2: &BinaryFeatures,
     ) -> JaccardSimilarity {
-        let instruction_similarity =
-            self.jaccard_coefficient(&binary1.instruction_hashes, &binary2.instruction_hashes);
+        let chunk_4_similarity =
+            self.jaccard_coefficient(&binary1.chunk_4_hashes, &binary2.chunk_4_hashes);
 
-        let function_similarity =
-            self.jaccard_coefficient(&binary1.function_hashes, &binary2.function_hashes);
+        let chunk_16_similarity =
+            self.jaccard_coefficient(&binary1.chunk_16_hashes, &binary2.chunk_16_hashes);
 
-        let basic_block_similarity =
-            self.jaccard_coefficient(&binary1.basic_block_hashes, &binary2.basic_block_hashes);
+        let chunk_8_similarity =
+            self.jaccard_coefficient(&binary1.chunk_8_hashes, &binary2.chunk_8_hashes);
 
-        let overall_similarity = (instruction_similarity * self.instruction_weight)
-            + (function_similarity * self.function_weight)
-            + (basic_block_similarity * self.basic_block_weight);
+        let overall_similarity = (chunk_4_similarity * self.chunk_4_weight)
+            + (chunk_16_similarity * self.chunk_16_weight)
+            + (chunk_8_similarity * self.chunk_8_weight);
 
         JaccardSimilarity {
-            instruction_similarity,
-            function_similarity,
-            basic_block_similarity,
+            chunk_4_similarity,
+            chunk_16_similarity,
+            chunk_8_similarity,
             overall_similarity,
         }
     }

@@ -45,8 +45,8 @@ This plugin computes **byte-level** Jaccard similarity between binary files and 
 The plugin registers two commands (Plugins menu), both of which run through the
 bundled Rust `jaccard_analyzer` engine and prompt for a Parquet output location:
 
-- **Jaccard Similarity** — pairwise: select a folder of `.bndb` files; every pair is compared.
-- **Jaccard Similarity (Reference)** — compare the current (saved) binary against a folder of binaries.
+- **Jaccard Similarity** — pairwise: select a folder of executable or library files; every pair is compared. `.bndb` database files are deliberately excluded.
+- **Jaccard Similarity (Reference)** — compare the current view's original binary file against a folder of binaries.
 
 ### Command Line Interface
 
@@ -64,11 +64,11 @@ The plugin includes a standalone CLI tool:
 
 ### Feature Extraction
 
-The analyzer reads each file's raw bytes and hashes overlapping/aligned byte windows of three sizes into three hash sets. The set names are kept for output-schema compatibility, but they are **byte windows, not disassembled code**:
+The analyzer reads each file's raw bytes and hashes aligned byte chunks of three sizes into three hash sets. They are **byte chunks, not disassembled code**:
 
-1. **"Instructions"**: SHA-256 hashes of 4-byte windows
-2. **"Functions"**: SHA-256 hashes of 16-byte windows
-3. **"Basic Blocks"**: SHA-256 hashes of 8-byte windows
+1. **4-byte chunks**: SHA-256 hashes of aligned 4-byte chunks
+2. **16-byte chunks**: SHA-256 hashes of aligned 16-byte chunks
+3. **8-byte chunks**: SHA-256 hashes of aligned 8-byte chunks
 
 ### Similarity Calculation
 
@@ -79,9 +79,9 @@ J(A,B) = |A ∩ B| / |A ∪ B|
 ```
 
 Overall similarity uses a weighted combination of the three sets:
-- "Instructions" (4-byte windows): 40%
-- "Functions" (16-byte windows): 40%
-- "Basic Blocks" (8-byte windows): 20%
+- 4-byte chunks: 40%
+- 16-byte chunks: 40%
+- 8-byte chunks: 20%
 
 ### Output Format
 
@@ -93,9 +93,9 @@ Results are exported in Parquet format with the following schema:
 | binary2 | string | Second binary name |
 | binary_pair | string | Pair identifier |
 | jaccard_index | float64 | Overall similarity score |
-| instruction_similarity | float64 | Instruction-level similarity |
-| function_similarity | float64 | Function-level similarity |
-| basic_block_similarity | float64 | Basic block-level similarity |
+| chunk_4_similarity | float64 | Similarity of aligned 4-byte chunk sets |
+| chunk_16_similarity | float64 | Similarity of aligned 16-byte chunk sets |
+| chunk_8_similarity | float64 | Similarity of aligned 8-byte chunk sets |
 
 ## Development
 
