@@ -1,6 +1,6 @@
+use anyhow::Result;
 use clap::{Arg, Command};
 use rust_jaccard::{analyze_folder_jaccard, analyze_folder_pairwise_jaccard};
-use anyhow::Result;
 
 fn main() -> Result<()> {
     env_logger::init();
@@ -48,12 +48,18 @@ fn main() -> Result<()> {
     if pairwise_mode || matches.get_one::<String>("reference").is_none() {
         // Pairwise mode (default)
         analyze_folder_pairwise_jaccard(folder_path, output_path)?;
-        println!("Pairwise analysis completed successfully. Results saved to {}", output_path);
+        println!(
+            "Pairwise analysis completed successfully. Results saved to {}",
+            output_path
+        );
     } else {
         // Reference mode
         let reference_path = matches.get_one::<String>("reference").unwrap();
         analyze_folder_jaccard(reference_path, folder_path, output_path)?;
-        println!("Reference-based analysis completed successfully. Results saved to {}", output_path);
+        println!(
+            "Reference-based analysis completed successfully. Results saved to {}",
+            output_path
+        );
     }
 
     Ok(())

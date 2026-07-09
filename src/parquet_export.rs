@@ -1,4 +1,5 @@
-use anyhow::{Result, Context};
+use crate::jaccard::JaccardSimilarity;
+use anyhow::{Context, Result};
 use arrow::array::{Array, Float64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
@@ -6,7 +7,6 @@ use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::sync::Arc;
-use crate::jaccard::JaccardSimilarity;
 
 pub struct ParquetExporter {
     writer_properties: WriterProperties,
@@ -29,17 +29,16 @@ impl ParquetExporter {
         let schema = self.create_schema();
         let record_batch = self.create_record_batch(results, &schema)?;
 
-        let file = File::create(output_path)
-            .context("Failed to create output file")?;
+        let file = File::create(output_path).context("Failed to create output file")?;
 
         let mut writer = ArrowWriter::try_new(file, schema, Some(self.writer_properties.clone()))
             .context("Failed to create Arrow writer")?;
 
-        writer.write(&record_batch)
+        writer
+            .write(&record_batch)
             .context("Failed to write record batch")?;
 
-        writer.close()
-            .context("Failed to close writer")?;
+        writer.close().context("Failed to close writer")?;
 
         Ok(())
     }
@@ -82,7 +81,7 @@ impl ParquetExporter {
                 binary1_names.push(pair_name.as_str());
                 binary2_names.push("");
             }
-            
+
             binary_pairs.push(pair_name.as_str());
             jaccard_indices.push(similarity.overall_similarity);
             instruction_similarities.push(similarity.instruction_similarity);
@@ -100,8 +99,7 @@ impl ParquetExporter {
             Arc::new(Float64Array::from(basic_block_similarities)),
         ];
 
-        RecordBatch::try_new(schema.clone(), columns)
-            .context("Failed to create record batch")
+        RecordBatch::try_new(schema.clone(), columns).context("Failed to create record batch")
     }
 
     pub fn export_detailed_results(
@@ -113,17 +111,16 @@ impl ParquetExporter {
         let schema = self.create_detailed_schema();
         let record_batch = self.create_detailed_record_batch(results, _metadata, &schema)?;
 
-        let file = File::create(output_path)
-            .context("Failed to create output file")?;
+        let file = File::create(output_path).context("Failed to create output file")?;
 
         let mut writer = ArrowWriter::try_new(file, schema, Some(self.writer_properties.clone()))
             .context("Failed to create Arrow writer")?;
 
-        writer.write(&record_batch)
+        writer
+            .write(&record_batch)
             .context("Failed to write record batch")?;
 
-        writer.close()
-            .context("Failed to close writer")?;
+        writer.close().context("Failed to close writer")?;
 
         Ok(())
     }
@@ -219,7 +216,11 @@ mod tests {
             basic_block_similarity: 0.7,
             overall_similarity: 0.6,
         };
-        let results = vec![("test.exe".to_string(), "/path/test.exe".to_string(), similarity)];
+        let results = vec![(
+            "test.exe".to_string(),
+            "/path/test.exe".to_string(),
+            similarity,
+        )];
         let temp_file = NamedTempFile::new().unwrap();
         let output_path = temp_file.path().to_str().unwrap();
 

@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::BinaryFeatures;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct JaccardSimilarity {
@@ -24,7 +24,11 @@ impl JaccardAnalyzer {
         }
     }
 
-    pub fn with_weights(instruction_weight: f64, function_weight: f64, basic_block_weight: f64) -> Self {
+    pub fn with_weights(
+        instruction_weight: f64,
+        function_weight: f64,
+        basic_block_weight: f64,
+    ) -> Self {
         Self {
             instruction_weight,
             function_weight,
@@ -32,21 +36,19 @@ impl JaccardAnalyzer {
         }
     }
 
-    pub fn calculate_similarity(&self, binary1: &BinaryFeatures, binary2: &BinaryFeatures) -> JaccardSimilarity {
-        let instruction_similarity = self.jaccard_coefficient(
-            &binary1.instruction_hashes,
-            &binary2.instruction_hashes,
-        );
+    pub fn calculate_similarity(
+        &self,
+        binary1: &BinaryFeatures,
+        binary2: &BinaryFeatures,
+    ) -> JaccardSimilarity {
+        let instruction_similarity =
+            self.jaccard_coefficient(&binary1.instruction_hashes, &binary2.instruction_hashes);
 
-        let function_similarity = self.jaccard_coefficient(
-            &binary1.function_hashes,
-            &binary2.function_hashes,
-        );
+        let function_similarity =
+            self.jaccard_coefficient(&binary1.function_hashes, &binary2.function_hashes);
 
-        let basic_block_similarity = self.jaccard_coefficient(
-            &binary1.basic_block_hashes,
-            &binary2.basic_block_hashes,
-        );
+        let basic_block_similarity =
+            self.jaccard_coefficient(&binary1.basic_block_hashes, &binary2.basic_block_hashes);
 
         let overall_similarity = (instruction_similarity * self.instruction_weight)
             + (function_similarity * self.function_weight)
@@ -75,7 +77,11 @@ impl JaccardAnalyzer {
         }
     }
 
-    pub fn calculate_batch_similarities(&self, reference: &BinaryFeatures, binaries: &[BinaryFeatures]) -> Vec<(String, JaccardSimilarity)> {
+    pub fn calculate_batch_similarities(
+        &self,
+        reference: &BinaryFeatures,
+        binaries: &[BinaryFeatures],
+    ) -> Vec<(String, JaccardSimilarity)> {
         binaries
             .iter()
             .map(|binary| {
@@ -101,7 +107,7 @@ mod tests {
         let analyzer = JaccardAnalyzer::new();
         let set1: HashSet<u64> = [1, 2, 3, 4].iter().cloned().collect();
         let set2: HashSet<u64> = [1, 2, 3, 4].iter().cloned().collect();
-        
+
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 1.0);
     }
@@ -111,7 +117,7 @@ mod tests {
         let analyzer = JaccardAnalyzer::new();
         let set1: HashSet<u64> = [1, 2, 3].iter().cloned().collect();
         let set2: HashSet<u64> = [4, 5, 6].iter().cloned().collect();
-        
+
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 0.0);
     }
@@ -121,7 +127,7 @@ mod tests {
         let analyzer = JaccardAnalyzer::new();
         let set1: HashSet<u64> = [1, 2, 3, 4].iter().cloned().collect();
         let set2: HashSet<u64> = [3, 4, 5, 6].iter().cloned().collect();
-        
+
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 2.0 / 6.0);
     }
@@ -131,7 +137,7 @@ mod tests {
         let analyzer = JaccardAnalyzer::new();
         let set1: HashSet<u64> = HashSet::new();
         let set2: HashSet<u64> = HashSet::new();
-        
+
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 1.0);
     }

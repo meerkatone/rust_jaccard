@@ -1,10 +1,10 @@
 // Rust Jaccard Similarity Library for Binary Analysis
+use anyhow::{Context, Result};
+use log::info;
+use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
-use anyhow::{Result, Context};
-use log::info;
-use rayon::prelude::*;
 
 mod jaccard;
 mod parquet_export;
@@ -56,7 +56,7 @@ impl BinaryFeatures {
     }
 
     fn hash_bytes(bytes: &[u8]) -> u64 {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(bytes);
         let result = hasher.finalize();
@@ -66,7 +66,11 @@ impl BinaryFeatures {
     }
 }
 
-pub fn analyze_folder_jaccard(reference_path: &str, folder_path: &str, output_path: &str) -> Result<()> {
+pub fn analyze_folder_jaccard(
+    reference_path: &str,
+    folder_path: &str,
+    output_path: &str,
+) -> Result<()> {
     run_jaccard_analysis(reference_path, folder_path, output_path)
 }
 
@@ -76,17 +80,17 @@ pub fn analyze_folder_pairwise_jaccard(folder_path: &str, output_path: &str) -> 
 
 fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &str) -> Result<()> {
     info!("Starting Jaccard similarity analysis");
-    
+
     // Load reference binary
-    let reference_bytes = std::fs::read(reference_path)
-        .context("Failed to read reference binary")?;
-    
+    let reference_bytes =
+        std::fs::read(reference_path).context("Failed to read reference binary")?;
+
     let reference_name = Path::new(reference_path)
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    
+
     let current_binary = BinaryFeatures::extract_from_bytes(
         &reference_bytes,
         reference_name,
@@ -110,7 +114,7 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
         .filter_map(|entry| {
             let path = entry.path();
             let name = path.file_name()?.to_string_lossy().to_string();
-            
+
             match load_and_analyze_binary(path, name.clone()) {
                 Ok(features) => {
                     let similarity = analyzer.calculate_similarity(&current_binary, &features);
@@ -126,7 +130,7 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
 
     exporter.export_results(&results, output_path)?;
     info!("Results exported to {}", output_path);
-    
+
     Ok(())
 }
 
@@ -141,11 +145,7 @@ fn load_and_analyze_binary(path: &Path, name: String) -> Result<BinaryFeatures> 
     // name/size/path against the reference's real byte chunks and produced
     // a similarity that was effectively noise.
     let bytes = std::fs::read(path).context("Failed to read binary file")?;
-    BinaryFeatures::extract_from_bytes(
-        &bytes,
-        name,
-        path.to_string_lossy().to_string(),
-    )
+    BinaryFeatures::extract_from_bytes(&bytes, name, path.to_string_lossy().to_string())
 }
 
 fn is_binary_file(path: &Path) -> bool {
@@ -157,7 +157,7 @@ fn is_binary_file(path: &Path) -> bool {
 
 fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result<()> {
     info!("Starting pairwise Jaccard similarity analysis");
-    
+
     // Find all binary files in the folder
     let binary_paths: Vec<_> = WalkDir::new(folder_path)
         .into_iter()
@@ -174,7 +174,7 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
         .filter_map(|entry| {
             let path = entry.path();
             let name = path.file_name()?.to_string_lossy().to_string();
-            
+
             match load_and_analyze_binary(path, name) {
                 Ok(features) => Some(features),
                 Err(e) => {
@@ -192,36 +192,38 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
 
     // Calculate pairwise similarities
     let mut results = Vec::new();
-    
+
     for (i, binary1) in binaries.iter().enumerate() {
         for (j, binary2) in binaries.iter().enumerate() {
             // Skip self-comparison and duplicate pairs (only calculate upper triangle)
             if i >= j {
                 continue;
             }
-            
+
             let similarity = analyzer.calculate_similarity(binary1, binary2);
-            
+
             // Create a better pair identifier
             let pair_name = format!("{}|{}", binary1.name, binary2.name);
             let pair_path = format!("{} <-> {}", binary1.path, binary2.path);
-            
-            info!("Compared {} vs {}: overall similarity = {:.4}", 
-                  binary1.name, binary2.name, similarity.overall_similarity);
-            
+
+            info!(
+                "Compared {} vs {}: overall similarity = {:.4}",
+                binary1.name, binary2.name, similarity.overall_similarity
+            );
+
             results.push((pair_name, pair_path, similarity));
         }
     }
 
     info!("Calculated {} pairwise similarities", results.len());
-    
+
     if results.is_empty() {
         info!("No similarity pairs found; writing an empty Parquet result");
     }
 
     exporter.export_results(&results, output_path)?;
     info!("Results exported to {}", output_path);
-    
+
     Ok(())
 }
 
