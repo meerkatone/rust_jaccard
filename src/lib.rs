@@ -216,10 +216,9 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
     info!("Calculated {} pairwise similarities", results.len());
     
     if results.is_empty() {
-        info!("Warning: No similarity results to export");
-        return Ok(());
+        info!("No similarity pairs found; writing an empty Parquet result");
     }
-    
+
     exporter.export_results(&results, output_path)?;
     info!("Results exported to {}", output_path);
     
