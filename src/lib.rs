@@ -11,7 +11,7 @@ mod jaccard;
 mod parquet_export;
 
 pub use jaccard::{JaccardAnalyzer, JaccardSimilarity};
-pub use parquet_export::ParquetExporter;
+pub use parquet_export::{ComparisonResult, ParquetExporter};
 
 #[derive(Debug, Clone)]
 pub struct BinaryFeatures {
@@ -117,7 +117,12 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
             match load_and_analyze_binary(path, name.clone()) {
                 Ok(features) => {
                     let similarity = analyzer.calculate_similarity(&current_binary, &features);
-                    Some((name, path.to_string_lossy().to_string(), similarity))
+                    Some(ComparisonResult {
+                        binary1: current_binary.name.clone(),
+                        binary2: name,
+                        pair_path: format!("{} <-> {}", current_binary.path, path.display()),
+                        similarity,
+                    })
                 }
                 Err(e) => {
                     info!("Failed to analyze {}: {}", path.display(), e);
@@ -224,8 +229,6 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
 
             let similarity = analyzer.calculate_similarity(binary1, binary2);
 
-            // Create a better pair identifier
-            let pair_name = format!("{}|{}", binary1.name, binary2.name);
             let pair_path = format!("{} <-> {}", binary1.path, binary2.path);
 
             info!(
@@ -233,7 +236,12 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
                 binary1.name, binary2.name, similarity.overall_similarity
             );
 
-            results.push((pair_name, pair_path, similarity));
+            results.push(ComparisonResult {
+                binary1: binary1.name.clone(),
+                binary2: binary2.name.clone(),
+                pair_path,
+                similarity,
+            });
         }
     }
 

@@ -1,8 +1,8 @@
 {
     "pluginmetadataversion": 2,
     "name": "Rust Jaccard Similarity Analyzer",
-    "type": ["core", "ui", "architecture", "binaryview"],
-    "api": ["python3", "cpp"],
+    "type": ["core", "ui"],
+    "api": ["python3"],
     "description": "Binary Ninja plugin for performing Jaccard similarity analysis against binaries in a folder and exporting results to Parquet format",
     "longdescription": "This plugin computes byte-level Jaccard similarity between binary files by hashing raw-byte windows of three sizes (it does not disassemble the inputs) and exports the results to Parquet. Both the menu commands and the standalone CLI share one bundled Rust engine, with parallel processing via Rayon for large binary datasets.",
     "license": {
@@ -12,5 +12,11 @@
     "dependencies": {},
     "version": "0.1.0",
     "author": "Binary Ninja Plugin Developer",
-    "minimumBinaryNinjaVersion": "3.0.0"
+    "minimumbinaryninjaversion": 3000,
+    "platforms": ["Darwin", "Linux", "Windows"],
+    "installinstructions": {
+        "Darwin": "Run cargo build --release, then restart Binary Ninja.",
+        "Linux": "Run cargo build --release, then restart Binary Ninja.",
+        "Windows": "Run cargo build --release, then restart Binary Ninja."
+    }
 }

@@ -12,6 +12,14 @@ pub struct ParquetExporter {
     writer_properties: WriterProperties,
 }
 
+#[derive(Debug, Clone)]
+pub struct ComparisonResult {
+    pub binary1: String,
+    pub binary2: String,
+    pub pair_path: String,
+    pub similarity: JaccardSimilarity,
+}
+
 impl ParquetExporter {
     pub fn new() -> Self {
         let writer_properties = WriterProperties::builder()
@@ -21,11 +29,7 @@ impl ParquetExporter {
         Self { writer_properties }
     }
 
-    pub fn export_results(
-        &self,
-        results: &[(String, String, JaccardSimilarity)],
-        output_path: &str,
-    ) -> Result<()> {
+    pub fn export_results(&self, results: &[ComparisonResult], output_path: &str) -> Result<()> {
         let schema = self.create_schema();
         let record_batch = self.create_record_batch(results, &schema)?;
 
@@ -59,7 +63,7 @@ impl ParquetExporter {
 
     fn create_record_batch(
         &self,
-        results: &[(String, String, JaccardSimilarity)],
+        results: &[ComparisonResult],
         schema: &Arc<Schema>,
     ) -> Result<RecordBatch> {
         let mut binary1_names = Vec::new();
@@ -70,19 +74,11 @@ impl ParquetExporter {
         let mut function_similarities = Vec::new();
         let mut basic_block_similarities = Vec::new();
 
-        for (pair_name, _path, similarity) in results {
-            // Extract binary names from pair name (format: "binary1|binary2")
-            let parts: Vec<&str> = pair_name.split('|').collect();
-            if parts.len() == 2 {
-                binary1_names.push(parts[0]);
-                binary2_names.push(parts[1]);
-            } else {
-                // Fallback for other formats
-                binary1_names.push(pair_name.as_str());
-                binary2_names.push("");
-            }
-
-            binary_pairs.push(pair_name.as_str());
+        for result in results {
+            let similarity = &result.similarity;
+            binary1_names.push(result.binary1.as_str());
+            binary2_names.push(result.binary2.as_str());
+            binary_pairs.push(format!("{}|{}", result.binary1, result.binary2));
             jaccard_indices.push(similarity.overall_similarity);
             instruction_similarities.push(similarity.chunk_4_similarity);
             function_similarities.push(similarity.chunk_16_similarity);
@@ -104,7 +100,7 @@ impl ParquetExporter {
 
     pub fn export_detailed_results(
         &self,
-        results: &[(String, String, JaccardSimilarity)],
+        results: &[ComparisonResult],
         _metadata: &[(&str, &str)],
         output_path: &str,
     ) -> Result<()> {
@@ -142,7 +138,7 @@ impl ParquetExporter {
 
     fn create_detailed_record_batch(
         &self,
-        results: &[(String, String, JaccardSimilarity)],
+        results: &[ComparisonResult],
         _metadata: &[(&str, &str)],
         schema: &Arc<Schema>,
     ) -> Result<RecordBatch> {
@@ -158,9 +154,10 @@ impl ParquetExporter {
         let timestamp = chrono::Utc::now().to_rfc3339();
         let version = env!("CARGO_PKG_VERSION");
 
-        for (name, path, similarity) in results {
-            binary_names.push(name.as_str());
-            binary_paths.push(path.as_str());
+        for result in results {
+            let similarity = &result.similarity;
+            binary_names.push(result.binary2.as_str());
+            binary_paths.push(result.pair_path.as_str());
             instruction_similarities.push(similarity.chunk_4_similarity);
             function_similarities.push(similarity.chunk_16_similarity);
             basic_block_similarities.push(similarity.chunk_8_similarity);
@@ -216,15 +213,31 @@ mod tests {
             chunk_8_similarity: 0.7,
             overall_similarity: 0.6,
         };
-        let results = vec![(
-            "test.exe".to_string(),
-            "/path/test.exe".to_string(),
+        let results = vec![ComparisonResult {
+            binary1: "reference|name.exe".to_string(),
+            binary2: "test|name.exe".to_string(),
+            pair_path: "/path/reference <-> /path/test".to_string(),
             similarity,
-        )];
+        }];
         let temp_file = NamedTempFile::new().unwrap();
         let output_path = temp_file.path().to_str().unwrap();
 
         let result = exporter.export_results(&results, output_path);
         assert!(result.is_ok());
+
+        let schema = exporter.create_schema();
+        let batch = exporter.create_record_batch(&results, &schema).unwrap();
+        let binary1 = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let binary2 = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(binary1.value(0), "reference|name.exe");
+        assert_eq!(binary2.value(0), "test|name.exe");
     }
 }
