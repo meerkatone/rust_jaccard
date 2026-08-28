@@ -1,6 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Arg, Command};
-use rust_jaccard::{analyze_folder_jaccard, analyze_folder_pairwise_jaccard};
+use rust_jaccard::{
+    analyze_folder_jaccard, analyze_folder_pairwise_jaccard_with_limits,
+    DEFAULT_MAX_PAIRWISE_FILES, DEFAULT_MAX_PAIRWISE_INPUT_BYTES,
+};
 
 fn main() -> Result<()> {
     env_logger::init();
@@ -39,6 +42,22 @@ fn main() -> Result<()> {
                 .help("Perform pairwise comparison of all binaries (default mode)")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("max-pairwise-files")
+                .long("max-pairwise-files")
+                .value_name("COUNT")
+                .help("Maximum binaries accepted in pairwise mode")
+                .value_parser(clap::value_parser!(usize))
+                .default_value("256"),
+        )
+        .arg(
+            Arg::new("max-pairwise-input-mib")
+                .long("max-pairwise-input-mib")
+                .value_name("MIB")
+                .help("Maximum total input size accepted in pairwise mode")
+                .value_parser(clap::value_parser!(u64))
+                .default_value("512"),
+        )
         .get_matches();
 
     let folder_path = matches.get_one::<String>("folder").unwrap();
@@ -47,7 +66,23 @@ fn main() -> Result<()> {
 
     if pairwise_mode || matches.get_one::<String>("reference").is_none() {
         // Pairwise mode (default)
-        analyze_folder_pairwise_jaccard(folder_path, output_path)?;
+        let max_files = matches
+            .get_one::<usize>("max-pairwise-files")
+            .copied()
+            .unwrap_or(DEFAULT_MAX_PAIRWISE_FILES);
+        let max_input_mib = matches
+            .get_one::<u64>("max-pairwise-input-mib")
+            .copied()
+            .unwrap_or(DEFAULT_MAX_PAIRWISE_INPUT_BYTES / (1024 * 1024));
+        let max_total_bytes = max_input_mib
+            .checked_mul(1024 * 1024)
+            .context("--max-pairwise-input-mib is too large")?;
+        analyze_folder_pairwise_jaccard_with_limits(
+            folder_path,
+            output_path,
+            max_files,
+            max_total_bytes,
+        )?;
         println!(
             "Pairwise analysis completed successfully. Results saved to {}",
             output_path

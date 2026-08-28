@@ -28,10 +28,14 @@ This plugin computes **byte-level** Jaccard similarity between binary files and 
 2. **Build the Rust Components**:
    ```bash
    cd /path/to/plugin/directory
-   cargo build --release
+   cargo build --locked --release
+   ```
 
-   If the plugin fails to load due to the following error message "This plugin was built for an outdated core ABI (XXX). Please rebuild the plugin with the latest API (XXX)." Please use the following to update the dependencies:
-   cargo update && cargo build --release
+   If Binary Ninja reports that the plugin was built for an outdated core ABI, update the lockfile deliberately and rebuild:
+
+   ```bash
+   cargo update
+   cargo build --locked --release
    ```
 
 3. **Install Plugin**:
@@ -55,6 +59,11 @@ The plugin includes a standalone CLI tool:
 ```bash
 # Pairwise analysis of all binaries in a folder
 ./target/release/jaccard_analyzer -f /path/to/binaries -o results.parquet -p
+
+# Pairwise mode defaults to 256 files and 512 MiB total input. Raise either
+# limit explicitly only when the machine has enough memory for all features.
+./target/release/jaccard_analyzer -f /path/to/binaries -o results.parquet -p \
+  --max-pairwise-files 512 --max-pairwise-input-mib 1024
 
 # Compare reference binary against folder
 ./target/release/jaccard_analyzer -r reference.bin -f /path/to/binaries -o results.parquet
@@ -103,20 +112,20 @@ Results are exported in Parquet format with the following schema:
 
 ```bash
 # Build release version
-cargo build --release
+cargo build --locked --release
 
 # Build debug version
-cargo build
+cargo build --locked
 ```
 
 ### Testing
 
 ```bash
 # Run all tests
-cargo test
+cargo test --locked
 
 # Run with verbose output
-cargo test -- --nocapture
+cargo test --locked -- --nocapture
 ```
 
 ### Linting
@@ -169,7 +178,7 @@ cargo fmt
 ## Performance
 
 - **Parallel Processing**: Utilizes all CPU cores for analysis
-- **Memory Efficient**: Streaming processing for large datasets
+- **Bounded pairwise mode**: Rejects more than 256 files or 512 MiB of input by default because pairwise features are held in memory; CLI flags can raise either limit explicitly
 - **Optimized Storage**: Compressed Parquet format reduces file size by ~70%
 
 ## License
@@ -181,7 +190,7 @@ MIT License - see LICENSE file for details.
 1. Fork the repository
 2. Create a feature branch
 3. Make changes and add tests
-4. Run `cargo test` and `cargo clippy`
+4. Run `cargo test --locked` and `cargo clippy --locked`
 5. Submit a pull request
 
 ## Troubleshooting
@@ -189,7 +198,7 @@ MIT License - see LICENSE file for details.
 ### Common Issues
 
 **"Rust binary not found" error**:
-- Ensure you've run `cargo build --release`
+- Ensure you've run `cargo build --locked --release`
 - Check that the binary exists at `target/release/jaccard_analyzer`
 
 **Plugin not appearing in Binary Ninja**:

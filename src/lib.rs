@@ -1,5 +1,5 @@
 // Rust Jaccard Similarity Library for Binary Analysis
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use log::info;
 use rayon::prelude::*;
 use std::collections::HashSet;
@@ -12,6 +12,9 @@ mod parquet_export;
 
 pub use jaccard::{JaccardAnalyzer, JaccardSimilarity};
 pub use parquet_export::{ComparisonResult, ParquetExporter};
+
+pub const DEFAULT_MAX_PAIRWISE_FILES: usize = 256;
+pub const DEFAULT_MAX_PAIRWISE_INPUT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct BinaryFeatures {
@@ -74,7 +77,21 @@ pub fn analyze_folder_jaccard(
 }
 
 pub fn analyze_folder_pairwise_jaccard(folder_path: &str, output_path: &str) -> Result<()> {
-    run_pairwise_jaccard_analysis(folder_path, output_path)
+    analyze_folder_pairwise_jaccard_with_limits(
+        folder_path,
+        output_path,
+        DEFAULT_MAX_PAIRWISE_FILES,
+        DEFAULT_MAX_PAIRWISE_INPUT_BYTES,
+    )
+}
+
+pub fn analyze_folder_pairwise_jaccard_with_limits(
+    folder_path: &str,
+    output_path: &str,
+    max_files: usize,
+    max_total_bytes: u64,
+) -> Result<()> {
+    run_pairwise_jaccard_analysis(folder_path, output_path, max_files, max_total_bytes)
 }
 
 fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &str) -> Result<()> {
@@ -182,7 +199,42 @@ fn is_binary_file(path: &Path) -> bool {
         )
 }
 
-fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result<()> {
+fn validate_pairwise_limits(
+    file_count: usize,
+    total_bytes: u64,
+    max_files: usize,
+    max_total_bytes: u64,
+) -> Result<()> {
+    if max_files < 2 {
+        bail!("max pairwise files must be at least 2");
+    }
+    if max_total_bytes == 0 {
+        bail!("max pairwise input bytes must be greater than zero");
+    }
+    if file_count > max_files {
+        let pair_count = file_count.saturating_mul(file_count.saturating_sub(1)) / 2;
+        bail!(
+            "pairwise input contains {file_count} binaries ({pair_count} comparisons); \
+             the configured limit is {max_files}. Narrow the folder or raise \
+             --max-pairwise-files explicitly"
+        );
+    }
+    if total_bytes > max_total_bytes {
+        bail!(
+            "pairwise input totals {total_bytes} bytes; the configured limit is \
+             {max_total_bytes} bytes. Narrow the folder or raise \
+             --max-pairwise-input-mib explicitly"
+        );
+    }
+    Ok(())
+}
+
+fn run_pairwise_jaccard_analysis(
+    folder_path: &str,
+    output_path: &str,
+    max_files: usize,
+    max_total_bytes: u64,
+) -> Result<()> {
     info!("Starting pairwise Jaccard similarity analysis");
 
     // Find all binary files in the folder
@@ -194,6 +246,15 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
         .collect();
 
     info!("Found {} binary files", binary_paths.len());
+
+    let total_bytes = binary_paths.iter().try_fold(0u64, |total, entry| {
+        let length = entry
+            .metadata()
+            .with_context(|| format!("Failed to read metadata for {}", entry.path().display()))?
+            .len();
+        Ok::<u64, anyhow::Error>(total.saturating_add(length))
+    })?;
+    validate_pairwise_limits(binary_paths.len(), total_bytes, max_files, max_total_bytes)?;
 
     // Load all binaries into memory
     let binaries: Vec<BinaryFeatures> = binary_paths
@@ -255,6 +316,34 @@ fn run_pairwise_jaccard_analysis(folder_path: &str, output_path: &str) -> Result
     info!("Results exported to {}", output_path);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod pairwise_limit_tests {
+    use super::validate_pairwise_limits;
+
+    #[test]
+    fn accepts_limits_at_the_boundary() {
+        assert!(validate_pairwise_limits(256, 512, 256, 512).is_ok());
+    }
+
+    #[test]
+    fn rejects_excessive_pair_count_before_loading_files() {
+        let error = validate_pairwise_limits(257, 1, 256, 512).unwrap_err();
+        assert!(error.to_string().contains("32896 comparisons"));
+    }
+
+    #[test]
+    fn rejects_excessive_total_input_size() {
+        let error = validate_pairwise_limits(2, 513, 256, 512).unwrap_err();
+        assert!(error.to_string().contains("totals 513 bytes"));
+    }
+
+    #[test]
+    fn rejects_invalid_configured_limits() {
+        assert!(validate_pairwise_limits(0, 0, 1, 512).is_err());
+        assert!(validate_pairwise_limits(0, 0, 2, 0).is_err());
+    }
 }
 
 // Library exports for use by Binary Ninja plugin
