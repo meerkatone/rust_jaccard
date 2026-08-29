@@ -143,7 +143,7 @@ cargo fmt
 **Rust Dependencies**:
 - `arrow` & `parquet`: Data export functionality
 - `rayon`: Parallel processing
-- `walkdir`: Directory traversal  
+- `walkdir`: Directory traversal
 - `sha2`: Cryptographic hashing
 - `clap`: CLI argument parsing
 - `serde`: Serialization
@@ -179,7 +179,8 @@ cargo fmt
 
 - **Parallel Processing**: Utilizes all CPU cores for analysis
 - **Bounded pairwise mode**: Rejects more than 256 files or 512 MiB of input by default because pairwise features are held in memory; CLI flags can raise either limit explicitly
-- **Optimized Storage**: Compressed Parquet format reduces file size by ~70%
+- **Compressed output**: Results use Parquet compression; the reduction depends
+  on the input corpus and comparison count.
 
 ## License
 
