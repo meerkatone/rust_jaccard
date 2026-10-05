@@ -113,13 +113,10 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
         reference_path.to_string(),
     )?;
 
-    // Find all binary files in the folder
-    let binary_paths: Vec<_> = WalkDir::new(folder_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| is_binary_file(e.path()))
-        .collect();
+    let binary_paths = discover_binary_paths(folder_path)?;
+    let reference_path =
+        std::fs::canonicalize(reference_path).context("Failed to resolve reference path")?;
+    let reference_path = reference_path.to_string_lossy().into_owned();
 
     let analyzer = JaccardAnalyzer::new();
     let exporter = ParquetExporter::new();
@@ -127,27 +124,25 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
     // Process binaries in parallel
     let results: Vec<_> = binary_paths
         .par_iter()
-        .filter_map(|entry| {
+        .map(|entry| {
             let path = entry.path();
-            let name = path.file_name()?.to_string_lossy().to_string();
-
-            match load_and_analyze_binary(path, name.clone()) {
-                Ok(features) => {
-                    let similarity = analyzer.calculate_similarity(&current_binary, &features);
-                    Some(ComparisonResult {
-                        binary1: current_binary.name.clone(),
-                        binary2: name,
-                        pair_path: format!("{} <-> {}", current_binary.path, path.display()),
-                        similarity,
-                    })
-                }
-                Err(e) => {
-                    info!("Failed to analyze {}: {}", path.display(), e);
-                    None
-                }
-            }
+            let name = path
+                .file_name()
+                .context("Binary has no filename")?
+                .to_string_lossy()
+                .into_owned();
+            let features = load_and_analyze_binary(path, name.clone())?;
+            let similarity = analyzer.calculate_similarity(&current_binary, &features);
+            Ok(ComparisonResult {
+                binary1: current_binary.name.clone(),
+                binary2: name,
+                binary1_path: reference_path.clone(),
+                binary2_path: features.path.clone(),
+                pair_path: format!("{} <-> {}", reference_path, path.display()),
+                similarity,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     exporter.export_results(&results, output_path)?;
     info!("Results exported to {}", output_path);
@@ -164,30 +159,48 @@ fn load_and_analyze_binary(path: &Path, name: String) -> Result<BinaryFeatures> 
     BinaryFeatures::extract_from_bytes(&bytes, name, path.to_string_lossy().to_string())
 }
 
-fn is_binary_file(path: &Path) -> bool {
+fn discover_binary_paths(folder_path: &str) -> Result<Vec<walkdir::DirEntry>> {
+    let folder = std::fs::canonicalize(folder_path).context("Failed to resolve input directory")?;
+    if !folder.is_dir() {
+        bail!("Input is not a directory: {}", folder.display());
+    }
+    let mut paths = Vec::new();
+    for entry in WalkDir::new(&folder) {
+        let entry = entry.with_context(|| format!("Failed to walk {}", folder.display()))?;
+        if entry.file_type().is_file() && is_binary_file(entry.path())? {
+            paths.push(entry);
+        }
+    }
+    paths.sort_by(|a, b| a.path().cmp(b.path()));
+    Ok(paths)
+}
+
+fn is_binary_file(path: &Path) -> Result<bool> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
     if extension == "bndb" {
-        return false;
+        return Ok(false);
     }
     if matches!(
         extension.as_str(),
         "exe" | "dll" | "sys" | "bin" | "so" | "dylib" | "o" | "elf"
     ) {
-        return true;
+        return Ok(true);
     }
 
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
     let mut header = [0u8; 4];
-    if file.read_exact(&mut header).is_err() {
-        return false;
+    if let Err(error) = file.read_exact(&mut header) {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            return Ok(false);
+        }
+        return Err(error).with_context(|| format!("Failed to read {}", path.display()));
     }
-    header.starts_with(b"MZ")
+    Ok(header.starts_with(b"MZ")
         || header.starts_with(b"\x7fELF")
         || matches!(
             header,
@@ -196,7 +209,7 @@ fn is_binary_file(path: &Path) -> bool {
                 | [0xfe, 0xed, 0xfa, 0xcf]
                 | [0xcf, 0xfa, 0xed, 0xfe]
                 | [0xca, 0xfe, 0xba, 0xbe]
-        )
+        ))
 }
 
 fn validate_pairwise_limits(
@@ -237,13 +250,7 @@ fn run_pairwise_jaccard_analysis(
 ) -> Result<()> {
     info!("Starting pairwise Jaccard similarity analysis");
 
-    // Find all binary files in the folder
-    let binary_paths: Vec<_> = WalkDir::new(folder_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| is_binary_file(e.path()))
-        .collect();
+    let binary_paths = discover_binary_paths(folder_path)?;
 
     info!("Found {} binary files", binary_paths.len());
 
@@ -259,19 +266,16 @@ fn run_pairwise_jaccard_analysis(
     // Load all binaries into memory
     let binaries: Vec<BinaryFeatures> = binary_paths
         .par_iter()
-        .filter_map(|entry| {
+        .map(|entry| {
             let path = entry.path();
-            let name = path.file_name()?.to_string_lossy().to_string();
-
-            match load_and_analyze_binary(path, name) {
-                Ok(features) => Some(features),
-                Err(e) => {
-                    info!("Failed to analyze {}: {}", path.display(), e);
-                    None
-                }
-            }
+            let name = path
+                .file_name()
+                .context("Binary has no filename")?
+                .to_string_lossy()
+                .into_owned();
+            load_and_analyze_binary(path, name)
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     info!("Successfully loaded {} binaries", binaries.len());
 
@@ -300,6 +304,8 @@ fn run_pairwise_jaccard_analysis(
             results.push(ComparisonResult {
                 binary1: binary1.name.clone(),
                 binary2: binary2.name.clone(),
+                binary1_path: binary1.path.clone(),
+                binary2_path: binary2.path.clone(),
                 pair_path,
                 similarity,
             });
@@ -320,7 +326,16 @@ fn run_pairwise_jaccard_analysis(
 
 #[cfg(test)]
 mod pairwise_limit_tests {
-    use super::validate_pairwise_limits;
+    use super::{discover_binary_paths, validate_pairwise_limits};
+
+    #[test]
+    fn rejects_missing_and_non_directory_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(discover_binary_paths(directory.path().join("missing").to_str().unwrap()).is_err());
+        let file = directory.path().join("file.bin");
+        std::fs::write(&file, b"data").unwrap();
+        assert!(discover_binary_paths(file.to_str().unwrap()).is_err());
+    }
 
     #[test]
     fn accepts_limits_at_the_boundary() {

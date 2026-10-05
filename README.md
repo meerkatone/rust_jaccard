@@ -100,11 +100,17 @@ Results are exported in Parquet format with the following schema:
 |--------|------|-------------|
 | binary1 | string | First binary name |
 | binary2 | string | Second binary name |
-| binary_pair | string | Pair identifier |
+| binary_pair | string | JSON array containing both canonical file paths |
 | jaccard_index | float64 | Overall similarity score |
 | chunk_4_similarity | float64 | Similarity of aligned 4-byte chunk sets |
 | chunk_16_similarity | float64 | Similarity of aligned 16-byte chunk sets |
 | chunk_8_similarity | float64 | Similarity of aligned 8-byte chunk sets |
+| binary1_path | string | Canonical path to the first binary |
+| binary2_path | string | Canonical path to the second binary |
+
+Use the path columns to identify files with duplicate basenames. Treat
+`binary_pair` as an opaque identifier or decode it as JSON. Missing directories
+and discovery/read errors fail the analysis before a result file is written.
 
 ## Development
 

@@ -16,6 +16,8 @@ pub struct ParquetExporter {
 pub struct ComparisonResult {
     pub binary1: String,
     pub binary2: String,
+    pub binary1_path: String,
+    pub binary2_path: String,
     pub pair_path: String,
     pub similarity: JaccardSimilarity,
 }
@@ -56,6 +58,8 @@ impl ParquetExporter {
             Field::new("chunk_4_similarity", DataType::Float64, false),
             Field::new("chunk_16_similarity", DataType::Float64, false),
             Field::new("chunk_8_similarity", DataType::Float64, false),
+            Field::new("binary1_path", DataType::Utf8, false),
+            Field::new("binary2_path", DataType::Utf8, false),
         ];
 
         Arc::new(Schema::new(fields))
@@ -78,7 +82,10 @@ impl ParquetExporter {
             let similarity = &result.similarity;
             binary1_names.push(result.binary1.as_str());
             binary2_names.push(result.binary2.as_str());
-            binary_pairs.push(format!("{}|{}", result.binary1, result.binary2));
+            binary_pairs.push(serde_json::to_string(&[
+                &result.binary1_path,
+                &result.binary2_path,
+            ])?);
             jaccard_indices.push(similarity.overall_similarity);
             instruction_similarities.push(similarity.chunk_4_similarity);
             function_similarities.push(similarity.chunk_16_similarity);
@@ -93,6 +100,18 @@ impl ParquetExporter {
             Arc::new(Float64Array::from(instruction_similarities)),
             Arc::new(Float64Array::from(function_similarities)),
             Arc::new(Float64Array::from(basic_block_similarities)),
+            Arc::new(StringArray::from(
+                results
+                    .iter()
+                    .map(|result| result.binary1_path.as_str())
+                    .collect::<Vec<_>>(),
+            )),
+            Arc::new(StringArray::from(
+                results
+                    .iter()
+                    .map(|result| result.binary2_path.as_str())
+                    .collect::<Vec<_>>(),
+            )),
         ];
 
         RecordBatch::try_new(schema.clone(), columns).context("Failed to create record batch")
@@ -157,7 +176,7 @@ impl ParquetExporter {
         for result in results {
             let similarity = &result.similarity;
             binary_names.push(result.binary2.as_str());
-            binary_paths.push(result.pair_path.as_str());
+            binary_paths.push(result.binary2_path.as_str());
             instruction_similarities.push(similarity.chunk_4_similarity);
             function_similarities.push(similarity.chunk_16_similarity);
             basic_block_similarities.push(similarity.chunk_8_similarity);
@@ -194,6 +213,49 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    fn same_named_files_keep_distinct_pair_identities() {
+        let exporter = ParquetExporter::new();
+        let similarity = JaccardSimilarity {
+            chunk_4_similarity: 1.0,
+            chunk_16_similarity: 1.0,
+            chunk_8_similarity: 1.0,
+            overall_similarity: 1.0,
+        };
+        let results: Vec<_> = [
+            ("/a/sample.bin", "/b/sample.bin"),
+            ("/a/sample.bin", "/c/sample.bin"),
+            ("/b/sample.bin", "/c/sample.bin"),
+        ]
+        .into_iter()
+        .map(|(a, b)| ComparisonResult {
+            binary1: "sample.bin".into(),
+            binary2: "sample.bin".into(),
+            binary1_path: a.into(),
+            binary2_path: b.into(),
+            pair_path: format!("{a} <-> {b}"),
+            similarity: similarity.clone(),
+        })
+        .collect();
+        let batch = exporter
+            .create_record_batch(&results, &exporter.create_schema())
+            .unwrap();
+        let pairs = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let identities: std::collections::HashSet<_> =
+            (0..3).map(|index| pairs.value(index)).collect();
+        assert_eq!(identities.len(), 3);
+        let paths = batch
+            .column(7)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(paths.value(0), "/a/sample.bin");
+    }
+
+    #[test]
     fn test_export_empty_results() {
         let exporter = ParquetExporter::new();
         let results = vec![];
@@ -216,6 +278,8 @@ mod tests {
         let results = vec![ComparisonResult {
             binary1: "reference|name.exe".to_string(),
             binary2: "test|name.exe".to_string(),
+            binary1_path: "/path/reference".to_string(),
+            binary2_path: "/path/test".to_string(),
             pair_path: "/path/reference <-> /path/test".to_string(),
             similarity,
         }];
