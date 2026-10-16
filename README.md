@@ -210,6 +210,13 @@ All 14 Rust tests pass, including a raw-byte-set oracle over 16,900 input
 pairs, empty inputs, repeated chunks, and partial tails. All targets pass
 `cargo clippy --locked --all-targets -- -D warnings`.
 
+Both registered menu commands also passed a fresh Binary Ninja Personal
+6.1.10951-dev smoke test. Their actual dialog callbacks received the original
+binary's directory, the Parquet filter, and complete default filenames.
+Both commands exported readable Parquet and gave identical binaries a score
+of 1.0. The dialog callbacks were automated; native file-picker appearance
+was not evaluated.
+
 - **Parallel Processing**: Utilizes all CPU cores for analysis
 - **Bounded pairwise mode**: Rejects more than 256 files or 512 MiB of input by default because pairwise features are held in memory; CLI flags can raise either limit explicitly
 - **Compressed output**: Results use Parquet compression; the reduction depends
