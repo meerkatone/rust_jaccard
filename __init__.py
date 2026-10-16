@@ -89,12 +89,13 @@ def analyze_folder_jaccard(bv):
         return
 
     # Get folder to analyze
-    folder_path = get_directory_name_input("Select folder with binaries", "Folder:")
+    # The second argument is the dialog's starting directory, not a label.
+    folder_path = get_directory_name_input("Select folder with binaries", os.path.dirname(current_path))
     if not folder_path:
         return
 
     # Get output file path
-    output_path = get_save_filename_input("Save results as", "parquet", "parquet")
+    output_path = get_save_filename_input("Save results as", "Parquet files (*.parquet)", os.path.join(folder_path, "jaccard_reference.parquet"))
     if not output_path:
         return
 
@@ -115,12 +116,13 @@ def analyze_folder_pairwise_jaccard(bv):
         return
 
     # Get folder to analyze
-    folder_path = get_directory_name_input("Select folder with binary files", "Folder:")
+    current_path = _original_binary_path(bv)
+    folder_path = get_directory_name_input("Select folder with binary files", os.path.dirname(current_path) if current_path else "")
     if not folder_path:
         return
 
     # Get output file path
-    output_path = get_save_filename_input("Save results as", "parquet", "parquet")
+    output_path = get_save_filename_input("Save results as", "Parquet files (*.parquet)", os.path.join(folder_path, "jaccard_pairwise.parquet"))
     if not output_path:
         return
 

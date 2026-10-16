@@ -22,7 +22,7 @@ pub struct BinaryFeatures {
     pub path: String,
     pub chunk_4_hashes: HashSet<u64>,
     pub chunk_16_hashes: HashSet<u64>,
-    pub chunk_8_hashes: HashSet<u64>,
+    pub chunk_8_hashes: HashSet<u128>,
 }
 
 impl BinaryFeatures {
@@ -33,8 +33,11 @@ impl BinaryFeatures {
 
         // These are deliberately raw-byte chunk features, not disassembled code.
         for chunk in bytes.chunks(4) {
-            let hash = Self::hash_bytes(chunk);
-            chunk_4_hashes.insert(hash);
+            let mut packed = [0u8; 4];
+            packed[..chunk.len()].copy_from_slice(chunk);
+            // Include length so a short trailing chunk differs from a
+            // full chunk with zero padding. All four bytes fit exactly.
+            chunk_4_hashes.insert(u64::from(u32::from_le_bytes(packed)) | (1 << (chunk.len() * 8)));
         }
 
         // Coarser chunk sizes capture longer identical byte runs.
@@ -44,8 +47,10 @@ impl BinaryFeatures {
         }
 
         for chunk in bytes.chunks(8) {
-            let hash = Self::hash_bytes(chunk);
-            chunk_8_hashes.insert(hash);
+            let mut packed = [0u8; 8];
+            packed[..chunk.len()].copy_from_slice(chunk);
+            chunk_8_hashes
+                .insert(u128::from(u64::from_le_bytes(packed)) | (1 << (chunk.len() * 8)));
         }
 
         Ok(BinaryFeatures {
@@ -323,6 +328,44 @@ fn run_pairwise_jaccard_analysis(
     info!("Results exported to {}", output_path);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod feature_tests {
+    use super::{BinaryFeatures, JaccardAnalyzer};
+    use std::collections::HashSet;
+
+    fn raw_jaccard(a: &[u8], b: &[u8], width: usize) -> f64 {
+        let a: HashSet<_> = a.chunks(width).collect();
+        let b: HashSet<_> = b.chunks(width).collect();
+        if a.is_empty() && b.is_empty() {
+            return 1.0;
+        }
+        a.intersection(&b).count() as f64 / a.union(&b).count() as f64
+    }
+
+    #[test]
+    fn packed_features_match_raw_chunk_sets_including_partial_tails() {
+        let inputs: Vec<Vec<u8>> = (0..=64)
+            .flat_map(|length| {
+                [
+                    vec![0; length],
+                    (0..length).map(|i| (i % 7) as u8).collect(),
+                ]
+            })
+            .collect();
+        for a in &inputs {
+            let features_a = BinaryFeatures::extract_from_bytes(a, "a".into(), "a".into()).unwrap();
+            for b in &inputs {
+                let features_b =
+                    BinaryFeatures::extract_from_bytes(b, "b".into(), "b".into()).unwrap();
+                let result = JaccardAnalyzer::new().calculate_similarity(&features_a, &features_b);
+                assert_eq!(result.chunk_4_similarity, raw_jaccard(a, b, 4));
+                assert_eq!(result.chunk_8_similarity, raw_jaccard(a, b, 8));
+                assert_eq!(result.chunk_16_similarity, raw_jaccard(a, b, 16));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use crate::BinaryFeatures;
 use std::collections::HashSet;
+use std::hash::Hash;
 
 #[derive(Debug, Clone)]
 pub struct JaccardSimilarity {
@@ -58,13 +59,13 @@ impl JaccardAnalyzer {
         }
     }
 
-    fn jaccard_coefficient(&self, set1: &HashSet<u64>, set2: &HashSet<u64>) -> f64 {
+    fn jaccard_coefficient<T: Eq + Hash>(&self, set1: &HashSet<T>, set2: &HashSet<T>) -> f64 {
         if set1.is_empty() && set2.is_empty() {
             return 1.0;
         }
 
         let intersection_size = set1.intersection(set2).count();
-        let union_size = set1.union(set2).count();
+        let union_size = set1.len() + set2.len() - intersection_size;
 
         if union_size == 0 {
             0.0

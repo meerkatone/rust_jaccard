@@ -52,6 +52,10 @@ bundled Rust `jaccard_analyzer` engine and prompt for a Parquet output location:
 - **Jaccard Similarity** — pairwise: select a folder of executable or library files; every pair is compared. `.bndb` database files are deliberately excluded.
 - **Jaccard Similarity (Reference)** — compare the current view's original binary file against a folder of binaries.
 
+The folder dialog starts beside the original binary when that file is
+available. Save dialogs default to `jaccard_pairwise.parquet` or
+`jaccard_reference.parquet` in the selected folder.
+
 ### Command Line Interface
 
 The plugin includes a standalone CLI tool:
@@ -73,11 +77,17 @@ The plugin includes a standalone CLI tool:
 
 ### Feature Extraction
 
-The analyzer reads each file's raw bytes and hashes aligned byte chunks of three sizes into three hash sets. They are **byte chunks, not disassembled code**:
+The analyzer reads each file's raw bytes and collects aligned byte chunks of three sizes into sets. They are **byte chunks, not disassembled code**:
 
-1. **4-byte chunks**: SHA-256 hashes of aligned 4-byte chunks
+1. **4-byte chunks**: exact packed byte values, with a length marker for trailing partial chunks
 2. **16-byte chunks**: SHA-256 hashes of aligned 16-byte chunks
-3. **8-byte chunks**: SHA-256 hashes of aligned 8-byte chunks
+3. **8-byte chunks**: exact packed byte values, with a length marker for trailing partial chunks
+
+16-byte features retain the first 64 bits of SHA-256. Short chunks remain
+distinct from zero-padded full chunks. Packing the smaller chunks avoids a
+cryptographic hash per chunk; set membership still uses Rust's standard hasher.
+The 8-byte feature keys now use 128 bits to preserve both bytes and length,
+so their memory use increases. Parquet columns and similarity weights are unchanged.
 
 ### Similarity Calculation
 
@@ -188,6 +198,17 @@ cargo fmt
 ```
 
 ## Performance
+
+A local release benchmark on two copied Binary Ninja dylibs totaling
+308.1 MiB averaged 18.460 seconds before exact 4-/8-byte packing and
+5.968 seconds after it, across two alternating runs of each engine on
+16 October 2026 (3.09× faster). Every output field and score matched.
+Performance depends on the input and machine. The 8-byte feature keys use
+128 bits to retain chunk length, so those sets require more storage.
+
+All 14 Rust tests pass, including a raw-byte-set oracle over 16,900 input
+pairs, empty inputs, repeated chunks, and partial tails. All targets pass
+`cargo clippy --locked --all-targets -- -D warnings`.
 
 - **Parallel Processing**: Utilizes all CPU cores for analysis
 - **Bounded pairwise mode**: Rejects more than 256 files or 512 MiB of input by default because pairwise features are held in memory; CLI flags can raise either limit explicitly
