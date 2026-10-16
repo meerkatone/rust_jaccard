@@ -112,6 +112,12 @@ Use the path columns to identify files with duplicate basenames. Treat
 `binary_pair` as an opaque identifier or decode it as JSON. Missing directories
 and discovery/read errors fail the analysis before a result file is written.
 
+Discovery recurses through the input directory and skips `.bndb` files. It
+accepts the extensions `exe`, `dll`, `sys`, `bin`, `so`, `dylib`, `o`, and
+`elf`, and otherwise reads the file header: PE (`MZ`), ELF, 32- and 64-bit
+Mach-O in either byte order, and universal (fat) Mach-O with 32- or 64-bit
+slice offsets.
+
 ## Development
 
 ### Building

@@ -209,6 +209,7 @@ fn is_binary_file(path: &Path) -> Result<bool> {
                 | [0xfe, 0xed, 0xfa, 0xcf]
                 | [0xcf, 0xfa, 0xed, 0xfe]
                 | [0xca, 0xfe, 0xba, 0xbe]
+                | [0xca, 0xfe, 0xba, 0xbf]
         ))
 }
 
@@ -326,7 +327,23 @@ fn run_pairwise_jaccard_analysis(
 
 #[cfg(test)]
 mod pairwise_limit_tests {
-    use super::{discover_binary_paths, validate_pairwise_limits};
+    use super::{discover_binary_paths, is_binary_file, validate_pairwise_limits};
+
+    #[test]
+    fn detects_universal_binaries_by_magic() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, magic) in [
+            ("fat32", [0xca, 0xfe, 0xba, 0xbe]),
+            ("fat64", [0xca, 0xfe, 0xba, 0xbf]),
+        ] {
+            let file = directory.path().join(name);
+            std::fs::write(&file, magic).unwrap();
+            assert!(is_binary_file(&file).unwrap(), "{name}");
+        }
+        let text = directory.path().join("notes");
+        std::fs::write(&text, b"text").unwrap();
+        assert!(!is_binary_file(&text).unwrap());
+    }
 
     #[test]
     fn rejects_missing_and_non_directory_inputs() {
