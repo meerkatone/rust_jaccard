@@ -1,3 +1,4 @@
+mod atomic_output;
 // Rust Jaccard Similarity Library for Binary Analysis
 use anyhow::{bail, Context, Result};
 use log::info;

@@ -1,3 +1,4 @@
+use crate::atomic_output::AtomicOutput;
 use crate::jaccard::JaccardSimilarity;
 use anyhow::{Context, Result};
 use arrow::array::{Array, Float64Array, StringArray};
@@ -5,7 +6,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
-use std::fs::File;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct ParquetExporter {
@@ -35,16 +36,22 @@ impl ParquetExporter {
         let schema = self.create_schema();
         let record_batch = self.create_record_batch(results, &schema)?;
 
-        let file = File::create(output_path).context("Failed to create output file")?;
+        let mut output = AtomicOutput::new(Path::new(output_path))
+            .context("Failed to create temporary output")?;
 
-        let mut writer = ArrowWriter::try_new(file, schema, Some(self.writer_properties.clone()))
-            .context("Failed to create Arrow writer")?;
+        let mut writer = ArrowWriter::try_new(
+            &mut output.file,
+            schema,
+            Some(self.writer_properties.clone()),
+        )
+        .context("Failed to create Arrow writer")?;
 
         writer
             .write(&record_batch)
             .context("Failed to write record batch")?;
 
         writer.close().context("Failed to close writer")?;
+        output.commit().context("Failed to publish report")?;
 
         Ok(())
     }
@@ -126,16 +133,22 @@ impl ParquetExporter {
         let schema = self.create_detailed_schema();
         let record_batch = self.create_detailed_record_batch(results, _metadata, &schema)?;
 
-        let file = File::create(output_path).context("Failed to create output file")?;
+        let mut output = AtomicOutput::new(Path::new(output_path))
+            .context("Failed to create temporary output")?;
 
-        let mut writer = ArrowWriter::try_new(file, schema, Some(self.writer_properties.clone()))
-            .context("Failed to create Arrow writer")?;
+        let mut writer = ArrowWriter::try_new(
+            &mut output.file,
+            schema,
+            Some(self.writer_properties.clone()),
+        )
+        .context("Failed to create Arrow writer")?;
 
         writer
             .write(&record_batch)
             .context("Failed to write record batch")?;
 
         writer.close().context("Failed to close writer")?;
+        output.commit().context("Failed to publish report")?;
 
         Ok(())
     }

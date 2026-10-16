@@ -258,3 +258,10 @@ Enable debug logging:
 ```bash
 RUST_LOG=debug ./target/release/jaccard_analyzer [args...]
 ```
+
+Reports now use a unique temporary file beside the destination, followed by
+close, sync, and atomic rename. Failed exports preserve an existing report.
+
+The native macOS folder and save panels were visually checked in Personal
+6.1.10951-dev. They open in the intended binary directory and show the complete
+Parquet filename. Both panels cancel cleanly.
