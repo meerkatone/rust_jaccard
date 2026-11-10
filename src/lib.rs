@@ -1,9 +1,8 @@
 mod atomic_output;
 // Rust Jaccard Similarity Library for Binary Analysis
 use anyhow::{bail, Context, Result};
-use log::info;
+use log::{debug, info};
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -17,60 +16,82 @@ pub use parquet_export::{ComparisonResult, ParquetExporter};
 pub const DEFAULT_MAX_PAIRWISE_FILES: usize = 256;
 pub const DEFAULT_MAX_PAIRWISE_INPUT_BYTES: u64 = 512 * 1024 * 1024;
 
+/// The distinct fixed-width chunks of one file.
+///
+/// Full chunks are packed into integers and kept sorted and deduplicated, so
+/// two sets intersect with one linear merge and no hashing. Only the last
+/// chunk of a file can be short; it is kept apart because its bytes cannot
+/// equal a full chunk, which makes the set exact without a length tag.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChunkSet<T> {
+    full: Vec<T>,
+    tail: Option<Vec<u8>>,
+}
+
+impl<T: Copy + Ord + Send> ChunkSet<T> {
+    fn from_bytes<const N: usize>(bytes: &[u8], pack: impl Fn([u8; N]) -> T) -> Self {
+        let (chunks, tail) = bytes.as_chunks::<N>();
+        let mut full: Vec<T> = chunks.iter().map(|chunk| pack(*chunk)).collect();
+        full.par_sort_unstable();
+        full.dedup();
+        full.shrink_to_fit();
+        Self {
+            full,
+            tail: (!tail.is_empty()).then(|| tail.to_vec()),
+        }
+    }
+
+    /// Build a set from already packed full chunks.
+    pub fn from_values(values: impl IntoIterator<Item = T>) -> Self {
+        let mut full: Vec<T> = values.into_iter().collect();
+        full.sort_unstable();
+        full.dedup();
+        Self { full, tail: None }
+    }
+
+    /// Number of distinct chunks.
+    pub fn len(&self) -> usize {
+        self.full.len() + usize::from(self.tail.is_some())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Number of chunks present in both sets.
+    pub fn intersection_len(&self, other: &Self) -> usize {
+        let (a, b) = (self.full.as_slice(), other.full.as_slice());
+        let (mut i, mut j, mut shared) = (0, 0, 0);
+        while i < a.len() && j < b.len() {
+            let (x, y) = (a[i], b[j]);
+            shared += usize::from(x == y);
+            i += usize::from(x <= y);
+            j += usize::from(y <= x);
+        }
+        shared + usize::from(self.tail.is_some() && self.tail == other.tail)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BinaryFeatures {
     pub name: String,
     pub path: String,
-    pub chunk_4_hashes: HashSet<u64>,
-    pub chunk_16_hashes: HashSet<u64>,
-    pub chunk_8_hashes: HashSet<u128>,
+    pub chunk_4: ChunkSet<u32>,
+    pub chunk_8: ChunkSet<u64>,
+    pub chunk_16: ChunkSet<u128>,
 }
 
 impl BinaryFeatures {
     pub fn extract_from_bytes(bytes: &[u8], name: String, path: String) -> Result<Self> {
-        let mut chunk_4_hashes = HashSet::new();
-        let mut chunk_16_hashes = HashSet::new();
-        let mut chunk_8_hashes = HashSet::new();
-
-        // These are deliberately raw-byte chunk features, not disassembled code.
-        for chunk in bytes.chunks(4) {
-            let mut packed = [0u8; 4];
-            packed[..chunk.len()].copy_from_slice(chunk);
-            // Include length so a short trailing chunk differs from a
-            // full chunk with zero padding. All four bytes fit exactly.
-            chunk_4_hashes.insert(u64::from(u32::from_le_bytes(packed)) | (1 << (chunk.len() * 8)));
-        }
-
-        // Coarser chunk sizes capture longer identical byte runs.
-        for chunk in bytes.chunks(16) {
-            let hash = Self::hash_bytes(chunk);
-            chunk_16_hashes.insert(hash);
-        }
-
-        for chunk in bytes.chunks(8) {
-            let mut packed = [0u8; 8];
-            packed[..chunk.len()].copy_from_slice(chunk);
-            chunk_8_hashes
-                .insert(u128::from(u64::from_le_bytes(packed)) | (1 << (chunk.len() * 8)));
-        }
-
+        // These are deliberately raw-byte chunk features, not disassembled
+        // code. Coarser chunk sizes capture longer identical byte runs.
         Ok(BinaryFeatures {
             name,
             path,
-            chunk_4_hashes,
-            chunk_16_hashes,
-            chunk_8_hashes,
+            chunk_4: ChunkSet::from_bytes(bytes, u32::from_le_bytes),
+            chunk_8: ChunkSet::from_bytes(bytes, u64::from_le_bytes),
+            chunk_16: ChunkSet::from_bytes(bytes, u128::from_le_bytes),
         })
-    }
-
-    fn hash_bytes(bytes: &[u8]) -> u64 {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        let result = hasher.finalize();
-        let mut hash_bytes = [0u8; 8];
-        hash_bytes.copy_from_slice(&result[..8]);
-        u64::from_le_bytes(hash_bytes)
     }
 }
 
@@ -289,35 +310,30 @@ fn run_pairwise_jaccard_analysis(
     let analyzer = JaccardAnalyzer::new();
     let exporter = ParquetExporter::new();
 
-    // Calculate pairwise similarities
-    let mut results = Vec::new();
-
-    for (i, binary1) in binaries.iter().enumerate() {
-        for (j, binary2) in binaries.iter().enumerate() {
-            // Skip self-comparison and duplicate pairs (only calculate upper triangle)
-            if i >= j {
-                continue;
-            }
-
-            let similarity = analyzer.calculate_similarity(binary1, binary2);
-
-            let pair_path = format!("{} <-> {}", binary1.path, binary2.path);
-
-            info!(
-                "Compared {} vs {}: overall similarity = {:.4}",
-                binary1.name, binary2.name, similarity.overall_similarity
-            );
-
-            results.push(ComparisonResult {
-                binary1: binary1.name.clone(),
-                binary2: binary2.name.clone(),
-                binary1_path: binary1.path.clone(),
-                binary2_path: binary2.path.clone(),
-                pair_path,
-                similarity,
-            });
-        }
-    }
+    // Compare each unordered pair once (the upper triangle). Pairs are
+    // independent, so they run in parallel; collect keeps them in order.
+    let results: Vec<ComparisonResult> = (0..binaries.len())
+        .into_par_iter()
+        .flat_map_iter(|first| {
+            let binary1 = &binaries[first];
+            let analyzer = &analyzer;
+            binaries[first + 1..].iter().map(move |binary2| {
+                let similarity = analyzer.calculate_similarity(binary1, binary2);
+                debug!(
+                    "Compared {} vs {}: overall similarity = {:.4}",
+                    binary1.name, binary2.name, similarity.overall_similarity
+                );
+                ComparisonResult {
+                    binary1: binary1.name.clone(),
+                    binary2: binary2.name.clone(),
+                    binary1_path: binary1.path.clone(),
+                    binary2_path: binary2.path.clone(),
+                    pair_path: format!("{} <-> {}", binary1.path, binary2.path),
+                    similarity,
+                }
+            })
+        })
+        .collect();
 
     info!("Calculated {} pairwise similarities", results.len());
 
@@ -333,7 +349,7 @@ fn run_pairwise_jaccard_analysis(
 
 #[cfg(test)]
 mod feature_tests {
-    use super::{BinaryFeatures, JaccardAnalyzer};
+    use super::{BinaryFeatures, ChunkSet, JaccardAnalyzer};
     use std::collections::HashSet;
 
     fn raw_jaccard(a: &[u8], b: &[u8], width: usize) -> f64 {
@@ -366,6 +382,28 @@ mod feature_tests {
                 assert_eq!(result.chunk_16_similarity, raw_jaccard(a, b, 16));
             }
         }
+    }
+
+    #[test]
+    fn short_tail_never_equals_a_full_chunk_with_the_same_leading_bytes() {
+        // "AB" as a two-byte tail, and as a full chunk padded with zeros.
+        let tail = BinaryFeatures::extract_from_bytes(b"AB", "t".into(), "t".into()).unwrap();
+        let full = BinaryFeatures::extract_from_bytes(b"AB\0\0", "f".into(), "f".into()).unwrap();
+        assert_eq!(tail.chunk_4.len(), 1);
+        assert_eq!(full.chunk_4.len(), 1);
+        assert_eq!(tail.chunk_4.intersection_len(&full.chunk_4), 0);
+        assert_eq!(tail.chunk_4.intersection_len(&tail.chunk_4), 1);
+    }
+
+    #[test]
+    fn chunk_sets_deduplicate_and_merge_in_either_order() {
+        let a = ChunkSet::from_values([5u64, 1, 5, 3, 9]);
+        let b = ChunkSet::from_values([9u64, 2, 3, 3]);
+        assert_eq!((a.len(), b.len()), (4, 3));
+        assert_eq!(a.intersection_len(&b), 2);
+        assert_eq!(b.intersection_len(&a), 2);
+        assert!(ChunkSet::<u64>::default().is_empty());
+        assert_eq!(a.intersection_len(&ChunkSet::default()), 0);
     }
 }
 

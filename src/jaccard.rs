@@ -1,6 +1,4 @@
-use crate::BinaryFeatures;
-use std::collections::HashSet;
-use std::hash::Hash;
+use crate::{BinaryFeatures, ChunkSet};
 
 #[derive(Debug, Clone)]
 pub struct JaccardSimilarity {
@@ -38,14 +36,11 @@ impl JaccardAnalyzer {
         binary1: &BinaryFeatures,
         binary2: &BinaryFeatures,
     ) -> JaccardSimilarity {
-        let chunk_4_similarity =
-            self.jaccard_coefficient(&binary1.chunk_4_hashes, &binary2.chunk_4_hashes);
+        let chunk_4_similarity = self.jaccard_coefficient(&binary1.chunk_4, &binary2.chunk_4);
 
-        let chunk_16_similarity =
-            self.jaccard_coefficient(&binary1.chunk_16_hashes, &binary2.chunk_16_hashes);
+        let chunk_16_similarity = self.jaccard_coefficient(&binary1.chunk_16, &binary2.chunk_16);
 
-        let chunk_8_similarity =
-            self.jaccard_coefficient(&binary1.chunk_8_hashes, &binary2.chunk_8_hashes);
+        let chunk_8_similarity = self.jaccard_coefficient(&binary1.chunk_8, &binary2.chunk_8);
 
         let overall_similarity = (chunk_4_similarity * self.chunk_4_weight)
             + (chunk_16_similarity * self.chunk_16_weight)
@@ -59,12 +54,16 @@ impl JaccardAnalyzer {
         }
     }
 
-    fn jaccard_coefficient<T: Eq + Hash>(&self, set1: &HashSet<T>, set2: &HashSet<T>) -> f64 {
+    fn jaccard_coefficient<T: Copy + Ord + Send>(
+        &self,
+        set1: &ChunkSet<T>,
+        set2: &ChunkSet<T>,
+    ) -> f64 {
         if set1.is_empty() && set2.is_empty() {
             return 1.0;
         }
 
-        let intersection_size = set1.intersection(set2).count();
+        let intersection_size = set1.intersection_len(set2);
         let union_size = set1.len() + set2.len() - intersection_size;
 
         if union_size == 0 {
@@ -102,8 +101,8 @@ mod tests {
     #[test]
     fn test_jaccard_coefficient_identical() {
         let analyzer = JaccardAnalyzer::new();
-        let set1: HashSet<u64> = [1, 2, 3, 4].iter().cloned().collect();
-        let set2: HashSet<u64> = [1, 2, 3, 4].iter().cloned().collect();
+        let set1 = ChunkSet::from_values([1u64, 2, 3, 4]);
+        let set2 = ChunkSet::from_values([1u64, 2, 3, 4]);
 
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 1.0);
@@ -112,8 +111,8 @@ mod tests {
     #[test]
     fn test_jaccard_coefficient_disjoint() {
         let analyzer = JaccardAnalyzer::new();
-        let set1: HashSet<u64> = [1, 2, 3].iter().cloned().collect();
-        let set2: HashSet<u64> = [4, 5, 6].iter().cloned().collect();
+        let set1 = ChunkSet::from_values([1u64, 2, 3]);
+        let set2 = ChunkSet::from_values([4u64, 5, 6]);
 
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 0.0);
@@ -122,8 +121,8 @@ mod tests {
     #[test]
     fn test_jaccard_coefficient_partial_overlap() {
         let analyzer = JaccardAnalyzer::new();
-        let set1: HashSet<u64> = [1, 2, 3, 4].iter().cloned().collect();
-        let set2: HashSet<u64> = [3, 4, 5, 6].iter().cloned().collect();
+        let set1 = ChunkSet::from_values([1u64, 2, 3, 4]);
+        let set2 = ChunkSet::from_values([3u64, 4, 5, 6]);
 
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 2.0 / 6.0);
@@ -132,8 +131,8 @@ mod tests {
     #[test]
     fn test_jaccard_coefficient_empty_sets() {
         let analyzer = JaccardAnalyzer::new();
-        let set1: HashSet<u64> = HashSet::new();
-        let set2: HashSet<u64> = HashSet::new();
+        let set1 = ChunkSet::<u64>::default();
+        let set2 = ChunkSet::<u64>::default();
 
         let coefficient = analyzer.jaccard_coefficient(&set1, &set2);
         assert_eq!(coefficient, 1.0);

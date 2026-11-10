@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import glob
 import os
 import subprocess
 
@@ -34,26 +35,59 @@ def _show_message(title, message):
     )
 
 
+def _remove_partial_reports(command, pid):
+    """Delete the temporary report a terminated analyzer left behind.
+
+    The analyzer writes `.bn-report-<pid>-<n>.tmp` beside the requested output
+    and renames it when complete; a killed process cannot clean it up.
+    """
+    try:
+        output = command[command.index("-o") + 1]
+    except (ValueError, IndexError):
+        return
+    directory = os.path.dirname(os.path.abspath(output))
+    for path in glob.glob(os.path.join(glob.escape(directory), f".bn-report-{pid}-*.tmp")):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 class JaccardTask(BackgroundTaskThread):
+    POLL_SECONDS = 0.2
+
     def __init__(self, command, success_message):
-        super().__init__("Jaccard byte similarity analysis", False)
+        super().__init__("Jaccard byte similarity analysis", True)
         self.command = command
         self.success_message = success_message
 
     def run(self):
         try:
-            result = subprocess.run(
-                self.command, capture_output=True, text=True, check=True
+            process = subprocess.Popen(
+                self.command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
-            if result.stdout:
-                log_info(f"Rust analyzer output: {result.stdout}")
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=self.POLL_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    if not self.cancelled:
+                        continue
+                    process.kill()
+                    process.communicate()
+                    _remove_partial_reports(self.command, process.pid)
+                    log_info("Jaccard analysis cancelled; no report was written")
+                    return
+            if process.returncode != 0:
+                message = f"Analysis failed with exit code {process.returncode}"
+                if stderr:
+                    message += f"\nError: {stderr}"
+                log_error(message)
+                _show_message("Error", message)
+                return
+            if stdout:
+                log_info(f"Rust analyzer output: {stdout}")
             _show_message("Success", self.success_message)
-        except subprocess.CalledProcessError as error:
-            message = f"Analysis failed with exit code {error.returncode}"
-            if error.stderr:
-                message += f"\nError: {error.stderr}"
-            log_error(message)
-            _show_message("Error", message)
         except Exception as error:
             message = f"Analysis failed: {error}"
             log_error(message)
