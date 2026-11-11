@@ -124,6 +124,8 @@ pub fn analyze_folder_pairwise_jaccard_with_limits(
 fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &str) -> Result<()> {
     info!("Starting Jaccard similarity analysis");
 
+    reject_output_alias(output_path, Path::new(reference_path))?;
+
     // Load reference binary
     let reference_bytes =
         std::fs::read(reference_path).context("Failed to read reference binary")?;
@@ -141,6 +143,9 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
     )?;
 
     let binary_paths = discover_binary_paths(folder_path)?;
+    for entry in &binary_paths {
+        reject_output_alias(output_path, entry.path())?;
+    }
     let reference_path =
         std::fs::canonicalize(reference_path).context("Failed to resolve reference path")?;
     let reference_path = reference_path.to_string_lossy().into_owned();
@@ -174,6 +179,19 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
     exporter.export_results(&results, output_path)?;
     info!("Results exported to {}", output_path);
 
+    Ok(())
+}
+
+/// Refuse to replace a binary with its own similarity report, including symlink aliases.
+fn reject_output_alias(output_path: &str, input: &Path) -> Result<()> {
+    if let Ok(output) = std::fs::canonicalize(output_path) {
+        if output == std::fs::canonicalize(input)? {
+            bail!(
+                "Output report would overwrite input binary: {}",
+                input.display()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -279,6 +297,9 @@ fn run_pairwise_jaccard_analysis(
     info!("Starting pairwise Jaccard similarity analysis");
 
     let binary_paths = discover_binary_paths(folder_path)?;
+    for entry in &binary_paths {
+        reject_output_alias(output_path, entry.path())?;
+    }
 
     info!("Found {} binary files", binary_paths.len());
 
@@ -410,6 +431,38 @@ mod feature_tests {
 #[cfg(test)]
 mod pairwise_limit_tests {
     use super::{discover_binary_paths, is_binary_file, validate_pairwise_limits};
+
+    #[test]
+    fn reports_cannot_overwrite_reference_or_pairwise_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let a = directory.path().join("a.bin");
+        let b = directory.path().join("b.bin");
+        std::fs::write(&a, b"binary a").unwrap();
+        std::fs::write(&b, b"binary b").unwrap();
+        let folder = directory.path().to_str().unwrap();
+        let output = a.to_str().unwrap();
+        assert!(super::analyze_folder_jaccard(output, folder, output)
+            .unwrap_err()
+            .to_string()
+            .contains("overwrite input"));
+        assert!(super::analyze_folder_pairwise_jaccard(folder, output)
+            .unwrap_err()
+            .to_string()
+            .contains("overwrite input"));
+        assert_eq!(std::fs::read(&a).unwrap(), b"binary a");
+        assert_eq!(std::fs::read(&b).unwrap(), b"binary b");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn report_destination_symlink_cannot_alias_an_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("a.bin");
+        let output = directory.path().join("report.parquet");
+        std::fs::write(&input, b"binary").unwrap();
+        std::os::unix::fs::symlink(&input, &output).unwrap();
+        assert!(super::reject_output_alias(output.to_str().unwrap(), &input).is_err());
+    }
 
     #[test]
     fn detects_universal_binaries_by_magic() {

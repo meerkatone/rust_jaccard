@@ -271,3 +271,7 @@ analyzer, removes its temporary file, and leaves any existing report in place.
 The native macOS folder and save panels were visually checked in Personal
 6.1.10951-dev. They open in the intended binary directory and show the complete
 Parquet filename. Both panels cancel cleanly.
+
+The analyzer refuses an output path that resolves to a discovered input binary
+or the reference binary (including symbolic-link aliases). Choose a separate
+report filename so an analysis cannot replace its source binary with Parquet.
