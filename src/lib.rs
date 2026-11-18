@@ -19,7 +19,7 @@ pub const DEFAULT_MAX_PAIRWISE_INPUT_BYTES: u64 = 512 * 1024 * 1024;
 /// The distinct fixed-width chunks of one file.
 ///
 /// Full chunks are packed into integers and kept sorted and deduplicated, so
-/// two sets intersect with one linear merge and no hashing. Only the last
+/// two sets intersect without hashing. Only the last
 /// chunk of a file can be short; it is kept apart because its bytes cannot
 /// equal a full chunk, which makes the set exact without a length tag.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -60,7 +60,24 @@ impl<T: Copy + Ord + Send> ChunkSet<T> {
 
     /// Number of chunks present in both sets.
     pub fn intersection_len(&self, other: &Self) -> usize {
+        let shared_tail = usize::from(self.tail.is_some() && self.tail == other.tail);
         let (a, b) = (self.full.as_slice(), other.full.as_slice());
+        let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+        let Some((small_min, small_max)) = small.first().zip(small.last()) else {
+            return shared_tail;
+        };
+        if small_max < &large[0] || small_min > &large[large.len() - 1] {
+            return shared_tail;
+        }
+        // A handful of lookups is cheaper than scanning a much larger set.
+        if large.len() / small.len() >= 32 {
+            let shared = small
+                .iter()
+                .filter(|value| large.binary_search(value).is_ok())
+                .count();
+            return shared + shared_tail;
+        }
+
         let (mut i, mut j, mut shared) = (0, 0, 0);
         while i < a.len() && j < b.len() {
             let (x, y) = (a[i], b[j]);
@@ -68,7 +85,7 @@ impl<T: Copy + Ord + Send> ChunkSet<T> {
             i += usize::from(x <= y);
             j += usize::from(y <= x);
         }
-        shared + usize::from(self.tail.is_some() && self.tail == other.tail)
+        shared + shared_tail
     }
 }
 
@@ -126,28 +143,21 @@ fn run_jaccard_analysis(reference_path: &str, folder_path: &str, output_path: &s
 
     reject_output_alias(output_path, Path::new(reference_path))?;
 
-    // Load reference binary
-    let reference_bytes =
-        std::fs::read(reference_path).context("Failed to read reference binary")?;
-
-    let reference_name = Path::new(reference_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let current_binary = BinaryFeatures::extract_from_bytes(
-        &reference_bytes,
-        reference_name,
-        reference_path.to_string(),
-    )?;
-
     let binary_paths = discover_binary_paths(folder_path)?;
     for entry in &binary_paths {
         reject_output_alias(output_path, entry.path())?;
     }
-    let reference_path =
-        std::fs::canonicalize(reference_path).context("Failed to resolve reference path")?;
+    let reference = Path::new(reference_path);
+    let reference_name = reference
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let current_binary = load_and_analyze_binary(reference, reference_name)
+        .context("Failed to load reference binary")?;
+    let reference_path = reference
+        .canonicalize()
+        .context("Failed to resolve reference path")?;
     let reference_path = reference_path.to_string_lossy().into_owned();
 
     let analyzer = JaccardAnalyzer::new();
@@ -197,7 +207,7 @@ fn reject_output_alias(output_path: &str, input: &Path) -> Result<()> {
 
 fn load_and_analyze_binary(path: &Path, name: String) -> Result<BinaryFeatures> {
     // This computes byte-level similarity over original binary files using the
-    // same chunk-and-hash featurization on both sides. Database files are
+    // same packed-chunk featurization on both sides. Database files are
     // excluded during discovery because their SQLite contents describe Binary
     // Ninja state rather than the program bytes being compared.
     let bytes = std::fs::read(path).context("Failed to read binary file")?;
@@ -414,6 +424,21 @@ mod feature_tests {
         assert_eq!(full.chunk_4.len(), 1);
         assert_eq!(tail.chunk_4.intersection_len(&full.chunk_4), 0);
         assert_eq!(tail.chunk_4.intersection_len(&tail.chunk_4), 1);
+    }
+
+    #[test]
+    fn skewed_and_disjoint_full_sets_count_shared_tails() {
+        let mut small = ChunkSet::from_values([0, 1000, 1200]);
+        let mut large = ChunkSet::from_values(1..=1024);
+        small.tail = Some(vec![1]);
+        large.tail = Some(vec![1]);
+        assert_eq!(small.intersection_len(&large), 2);
+        assert_eq!(large.intersection_len(&small), 2);
+
+        let mut disjoint = ChunkSet::from_values([1100, 1200]);
+        disjoint.tail = Some(vec![1]);
+        assert_eq!(large.intersection_len(&disjoint), 1);
+        assert_eq!(disjoint.intersection_len(&large), 1);
     }
 
     #[test]

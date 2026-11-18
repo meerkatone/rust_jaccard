@@ -83,12 +83,13 @@ The analyzer reads each file's raw bytes and collects aligned byte chunks of thr
 2. **16-byte chunks**: exact byte values packed into a `u128`
 3. **8-byte chunks**: exact byte values packed into a `u64`
 
-Each set is a sorted, deduplicated vector of packed chunks (`ChunkSet`), and
-two sets are intersected with one linear merge. No chunk is hashed, so there
-are no collisions at any width. Only the last chunk of a file can be short; it
-is stored apart from the full chunks, which keeps `"AB"` distinct from
-`"AB\0\0"`. Parquet columns and similarity weights are unchanged, and results
-are identical to the earlier hash-set implementation.
+Each set is a sorted, deduplicated vector of packed chunks (`ChunkSet`).
+Intersection skips disjoint value ranges and uses binary searches when one
+set has at least 32 times as many full chunks as the other. Comparable sets
+use a linear merge. Direct comparison of packed values gives exact matches
+at each width. A short final chunk is compared separately, which keeps
+`"AB"` distinct from `"AB\0\0"`. Reference mode releases the original
+reference bytes after extracting its chunk sets.
 
 On a 60-file, 86 MB corpus (1,770 pairs, Apple silicon), the pairwise run
 went from 3.7–4.0 s and 425 MB peak memory to 0.4–0.6 s and 215 MB.
